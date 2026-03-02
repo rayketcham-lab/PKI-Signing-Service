@@ -1,0 +1,725 @@
+//! Code signing orchestrator.
+//!
+//! Coordinates the signing pipeline:
+//! 1. Load PFX certificate and private key
+//! 2. Determine file type (PE, PowerShell, MSI/CAB)
+//! 3. Compute Authenticode hash
+//! 4. Build CMS/PKCS#7 SignedData
+//! 5. Optionally request RFC 3161 timestamp
+//! 6. Embed signature in file
+
+use std::path::Path;
+
+use pkcs8::DecodePrivateKey;
+use rsa::pkcs1v15::SigningKey;
+use rsa::RsaPrivateKey;
+use sha2::{Digest, Sha256};
+use signature::Signer;
+use zeroize::Zeroizing;
+
+use crate::error::{SignError, SignResult};
+use crate::pe;
+use crate::pkcs7::Pkcs7Builder;
+use crate::timestamp::TsaConfig;
+
+/// Supported file types for code signing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FileType {
+    /// Windows PE executable (.exe, .dll, .sys, .ocx, .scr, .cpl, .drv)
+    Pe,
+    /// PowerShell script (.ps1)
+    PowerShell,
+    /// Windows Installer (.msi)
+    Msi,
+    /// Cabinet archive (.cab)
+    Cab,
+}
+
+impl FileType {
+    /// Detect file type from extension.
+    pub fn from_extension(path: &Path) -> SignResult<Self> {
+        let ext = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(|e| e.to_lowercase())
+            .unwrap_or_default();
+
+        match ext.as_str() {
+            "exe" | "dll" | "sys" | "ocx" | "scr" | "cpl" | "drv" => Ok(Self::Pe),
+            "ps1" => Ok(Self::PowerShell),
+            "msi" => Ok(Self::Msi),
+            "cab" => Ok(Self::Cab),
+            _ => Err(SignError::UnsupportedFileType(ext)),
+        }
+    }
+}
+
+/// Loaded signing credentials from a PFX file.
+pub struct SigningCredentials {
+    /// RSA private key for signing.
+    rsa_key: RsaPrivateKey,
+    /// DER-encoded signing certificate.
+    signer_cert_der: Vec<u8>,
+    /// DER-encoded chain certificates.
+    chain_certs_der: Vec<Vec<u8>>,
+}
+
+impl SigningCredentials {
+    /// Load signing credentials from a PFX/PKCS#12 file.
+    pub fn from_pfx(pfx_path: &Path, password: &str) -> SignResult<Self> {
+        let pfx_data = std::fs::read(pfx_path).map_err(|e| {
+            SignError::Certificate(format!(
+                "Failed to read PFX file {}: {}",
+                pfx_path.display(),
+                e
+            ))
+        })?;
+
+        let pfx = p12::PFX::parse(&pfx_data)
+            .map_err(|e| SignError::Certificate(format!("Failed to parse PFX: {e}")))?;
+
+        // Verify the MAC to ensure correct password
+        if !pfx.verify_mac(password) {
+            return Err(SignError::Certificate(
+                "PFX password incorrect (MAC verification failed)".into(),
+            ));
+        }
+
+        // Extract private key(s) — PKCS#8 DER format
+        let key_bags = pfx
+            .key_bags(password)
+            .map_err(|e| SignError::Certificate(format!("Failed to extract private key: {e}")))?;
+
+        if key_bags.is_empty() {
+            return Err(SignError::Certificate(
+                "PFX contains no private keys".into(),
+            ));
+        }
+
+        // Wrap key material in Zeroizing for secure cleanup
+        let key_der = Zeroizing::new(key_bags[0].clone());
+
+        // Parse as RSA private key from PKCS#8 DER
+        let rsa_key = RsaPrivateKey::from_pkcs8_der(&key_der)
+            .map_err(|e| SignError::Certificate(format!("Failed to parse RSA private key: {e}")))?;
+
+        // Extract certificates
+        let cert_bags = pfx
+            .cert_x509_bags(password)
+            .map_err(|e| SignError::Certificate(format!("Failed to extract certificates: {e}")))?;
+
+        if cert_bags.is_empty() {
+            return Err(SignError::Certificate(
+                "PFX contains no certificates".into(),
+            ));
+        }
+
+        // First certificate is the signing cert, rest are chain certs
+        let signer_cert_der = cert_bags[0].clone();
+        let chain_certs_der = cert_bags[1..].to_vec();
+
+        // RFC 5280 §4.2.1.3: Validate the signing certificate's keyUsage extension.
+        // If present, it MUST include digitalSignature (bit 0) for code signing.
+        validate_key_usage_for_signing(&signer_cert_der)?;
+
+        // RFC 5280 §4.2.1.12: Validate the signing certificate's extendedKeyUsage.
+        // If present, it MUST include id-kp-codeSigning (1.3.6.1.5.5.7.3.3).
+        validate_eku_for_code_signing(&signer_cert_der)?;
+
+        Ok(SigningCredentials {
+            rsa_key,
+            signer_cert_der,
+            chain_certs_der,
+        })
+    }
+
+    /// Get a reference to the signing certificate DER bytes.
+    pub fn signer_cert_der(&self) -> &[u8] {
+        &self.signer_cert_der
+    }
+
+    /// Get a reference to the chain certificates.
+    pub fn chain_certs_der(&self) -> &[Vec<u8>] {
+        &self.chain_certs_der
+    }
+
+    /// Sign data using RSASSA-PKCS1-v1_5 with SHA-256.
+    ///
+    /// The input should be the DER-encoded signed attributes (as a SET).
+    /// The `Signer::sign` method internally computes SHA-256(data), builds
+    /// DigestInfo, applies PKCS#1 v1.5 padding, and performs RSA.
+    pub fn sign_data(&self, data: &[u8]) -> SignResult<Vec<u8>> {
+        let signing_key = SigningKey::<Sha256>::new(self.rsa_key.clone());
+        let signature = signing_key.sign(data);
+        // Convert Signature → Box<[u8]> → Vec<u8>
+        let sig_bytes: Box<[u8]> = signature.into();
+        Ok(sig_bytes.into_vec())
+    }
+}
+
+/// Result of a signing operation.
+#[derive(serde::Serialize)]
+pub struct SigningResult {
+    /// The signed file data.
+    #[serde(skip)]
+    pub signed_data: Vec<u8>,
+    /// Whether a timestamp was applied.
+    pub timestamped: bool,
+    /// SHA-256 hash of the original file (hex).
+    pub original_hash: String,
+    /// SHA-256 hash of the signed file (hex).
+    pub signed_hash: String,
+}
+
+/// Sign a file using Authenticode.
+///
+/// This is the main entry point for signing operations.
+pub async fn sign_file(
+    input_path: &Path,
+    output_path: &Path,
+    credentials: &SigningCredentials,
+    tsa_config: Option<&TsaConfig>,
+) -> SignResult<SigningResult> {
+    let file_type = FileType::from_extension(input_path)?;
+
+    let data = std::fs::read(input_path)?;
+    let original_hash = hex::encode(Sha256::digest(&data));
+
+    match file_type {
+        FileType::Pe => {
+            let result = sign_pe(&data, credentials, tsa_config).await?;
+            let signed_hash = hex::encode(Sha256::digest(&result.signed_data));
+
+            // Write output
+            std::fs::write(output_path, &result.signed_data)?;
+
+            Ok(SigningResult {
+                signed_data: result.signed_data,
+                timestamped: result.timestamped,
+                original_hash,
+                signed_hash,
+            })
+        }
+        FileType::PowerShell => {
+            crate::powershell::sign_ps1(&data, output_path, credentials, tsa_config).await
+        }
+        FileType::Msi | FileType::Cab => Err(SignError::UnsupportedFileType(
+            "MSI/CAB signing not yet implemented".into(),
+        )),
+    }
+}
+
+/// Internal result for PE signing (before writing to disk).
+struct PeSignResult {
+    signed_data: Vec<u8>,
+    timestamped: bool,
+}
+
+/// Sign a PE file (internal).
+async fn sign_pe(
+    data: &[u8],
+    credentials: &SigningCredentials,
+    tsa_config: Option<&TsaConfig>,
+) -> SignResult<PeSignResult> {
+    // Parse PE headers
+    let pe_info = pe::PeInfo::parse(data)?;
+
+    // Reject already-signed files
+    if pe_info.is_signed() {
+        return Err(SignError::AlreadySigned(
+            "PE file already contains an Authenticode signature".into(),
+        ));
+    }
+
+    // Compute Authenticode hash (SHA-256)
+    let image_hash = pe::compute_authenticode_hash(data, &pe_info)?;
+
+    // Build CMS/PKCS#7 SignedData
+    let mut builder = Pkcs7Builder::new(credentials.signer_cert_der.clone(), image_hash);
+
+    // Add chain certificates
+    for chain_cert in &credentials.chain_certs_der {
+        builder.add_chain_cert(chain_cert.clone());
+    }
+
+    // We need to sign first to get the signature bytes, then request a timestamp
+    // on those bytes. But the PKCS#7 builder needs the timestamp before build().
+    // Solution: build once without timestamp to get signature, request timestamp,
+    // then rebuild with the token embedded.
+    let mut timestamped = false;
+
+    if let Some(tsa) = tsa_config {
+        // First pass: build to extract the raw signature bytes
+        let sig_bytes = {
+            let temp_pkcs7 =
+                builder.build(|signed_attrs_der| credentials.sign_data(signed_attrs_der))?;
+            // Extract the signature value from the built PKCS#7
+            // The raw signature is what we signed with — recalculate it
+            // by signing the same attrs again (deterministic for PKCS#1 v1.5)
+            extract_signature_from_pkcs7(&temp_pkcs7)?
+        };
+
+        match crate::timestamp::request_timestamp(&sig_bytes, tsa).await {
+            Ok(token) => {
+                builder.set_timestamp_token(token);
+                timestamped = true;
+            }
+            Err(e) => {
+                // Timestamp failure is non-fatal — log warning and continue
+                eprintln!(
+                    "Warning: timestamping failed (signing will proceed without timestamp): {e}"
+                );
+            }
+        }
+    }
+
+    // Build the PKCS#7 blob — the sign_fn callback signs the DER-encoded
+    // signed attributes using RSASSA-PKCS1-v1_5 with SHA-256
+    let pkcs7_der = builder.build(|signed_attrs_der| credentials.sign_data(signed_attrs_der))?;
+
+    // Embed the signature in the PE file
+    let signed_pe = pe::embed_signature(data, &pe_info, &pkcs7_der)?;
+
+    Ok(PeSignResult {
+        signed_data: signed_pe,
+        timestamped,
+    })
+}
+
+/// Extract the raw signature bytes from a built PKCS#7 blob.
+///
+/// Navigates: ContentInfo → SignedData → SignerInfos → SignerInfo → signature OCTET STRING
+pub fn extract_signature_from_pkcs7(pkcs7: &[u8]) -> SignResult<Vec<u8>> {
+    use crate::pkcs7::asn1;
+
+    // ContentInfo SEQUENCE
+    let (_, ci_content) = asn1::parse_tlv(pkcs7)
+        .map_err(|e| SignError::Internal(format!("Failed to parse ContentInfo: {e}")))?;
+
+    // Skip OID (signedData)
+    let (_, remaining) = asn1::skip_tlv(ci_content)
+        .map_err(|e| SignError::Internal(format!("Failed to skip OID: {e}")))?;
+
+    // [0] EXPLICIT → SignedData SEQUENCE
+    let (_, explicit_content) = asn1::parse_tlv(remaining)
+        .map_err(|e| SignError::Internal(format!("Failed to parse [0] EXPLICIT: {e}")))?;
+
+    // SignedData SEQUENCE
+    let (_, sd_content) = asn1::parse_tlv(explicit_content)
+        .map_err(|e| SignError::Internal(format!("Failed to parse SignedData: {e}")))?;
+
+    // Skip: version, digestAlgorithms, contentInfo, certificates
+    let mut pos = sd_content;
+    for field_name in &["version", "digestAlgorithms", "contentInfo", "certificates"] {
+        let (_, remaining) = asn1::skip_tlv(pos)
+            .map_err(|e| SignError::Internal(format!("Failed to skip {field_name}: {e}")))?;
+        pos = remaining;
+    }
+
+    // SignerInfos SET
+    let (_, si_set_content) = asn1::parse_tlv(pos)
+        .map_err(|e| SignError::Internal(format!("Failed to parse SignerInfos: {e}")))?;
+
+    // SignerInfo SEQUENCE
+    let (_, si_content) = asn1::parse_tlv(si_set_content)
+        .map_err(|e| SignError::Internal(format!("Failed to parse SignerInfo: {e}")))?;
+
+    // Skip: version, issuerAndSerialNumber, digestAlgorithm, signedAttrs [0], signatureAlgorithm
+    let mut pos = si_content;
+    for field_name in &[
+        "version",
+        "issuerAndSerialNumber",
+        "digestAlgorithm",
+        "signedAttrs",
+        "signatureAlgorithm",
+    ] {
+        let (_, remaining) = asn1::skip_tlv(pos)
+            .map_err(|e| SignError::Internal(format!("Failed to skip {field_name}: {e}")))?;
+        pos = remaining;
+    }
+
+    // signature OCTET STRING
+    let (_, sig_bytes) = asn1::parse_tlv(pos)
+        .map_err(|e| SignError::Internal(format!("Failed to parse signature: {e}")))?;
+
+    Ok(sig_bytes.to_vec())
+}
+
+/// Sign a PE file from raw bytes (convenience function).
+///
+/// Returns the signed PE data. Useful for testing without file I/O.
+pub fn sign_pe_bytes(data: &[u8], credentials: &SigningCredentials) -> SignResult<Vec<u8>> {
+    let pe_info = pe::PeInfo::parse(data)?;
+
+    if pe_info.is_signed() {
+        return Err(SignError::AlreadySigned(
+            "PE file already contains an Authenticode signature".into(),
+        ));
+    }
+
+    let image_hash = pe::compute_authenticode_hash(data, &pe_info)?;
+
+    let mut builder = Pkcs7Builder::new(credentials.signer_cert_der.clone(), image_hash);
+
+    for chain_cert in &credentials.chain_certs_der {
+        builder.add_chain_cert(chain_cert.clone());
+    }
+
+    let pkcs7_der = builder.build(|signed_attrs_der| credentials.sign_data(signed_attrs_der))?;
+
+    pe::embed_signature(data, &pe_info, &pkcs7_der)
+}
+
+/// RFC 5280 §4.2.1.3: Validate that a signing certificate's keyUsage extension,
+/// if present, includes the digitalSignature bit (bit 0).
+///
+/// If the extension is absent, we permit signing (many certs omit keyUsage).
+/// If present, digitalSignature MUST be set for code signing.
+fn validate_key_usage_for_signing(cert_der: &[u8]) -> SignResult<()> {
+    use crate::pkcs7::asn1;
+
+    // keyUsage OID: 2.5.29.15
+    let key_usage_oid: &[u8] = &[0x06, 0x03, 0x55, 0x1D, 0x0F];
+
+    // Search for the keyUsage extension OID in the certificate DER.
+    // If not found, the extension is absent — signing is permitted.
+    let Some(oid_pos) = cert_der
+        .windows(key_usage_oid.len())
+        .position(|w| w == key_usage_oid)
+    else {
+        return Ok(()); // No keyUsage extension — permitted
+    };
+
+    // After the OID, we expect: [BOOLEAN critical], OCTET STRING { BIT STRING { bits } }
+    // Scan forward from the OID to find the BIT STRING containing the usage bits.
+    let after_oid = &cert_der[oid_pos + key_usage_oid.len()..];
+
+    // Skip optional BOOLEAN (critical flag) and OCTET STRING wrapper to find BIT STRING
+    for window_start in 0..after_oid.len().min(20) {
+        if after_oid[window_start] == 0x03 && window_start + 3 < after_oid.len() {
+            // BIT STRING found — tag 0x03, then length, then unused-bits count, then value
+            let (_, bit_content) = match asn1::parse_tlv(&after_oid[window_start..]) {
+                Ok(v) => v,
+                Err(_) => continue,
+            };
+            if bit_content.is_empty() {
+                continue;
+            }
+            // bit_content[0] = number of unused bits, bit_content[1..] = key usage flags
+            if bit_content.len() >= 2 {
+                let usage_byte = bit_content[1];
+                // digitalSignature is bit 0 (MSB) = 0x80
+                if usage_byte & 0x80 == 0 {
+                    return Err(SignError::Certificate(
+                        "RFC 5280 §4.2.1.3: signing certificate keyUsage does not include digitalSignature".into(),
+                    ));
+                }
+                return Ok(());
+            }
+        }
+    }
+
+    // Could not parse keyUsage — permit signing (defensive)
+    Ok(())
+}
+
+/// RFC 5280 §4.2.1.12: Validate that a signing certificate's extendedKeyUsage
+/// extension, if present, includes the id-kp-codeSigning OID (1.3.6.1.5.5.7.3.3).
+///
+/// If the extension is absent, we permit signing (many CA certs omit EKU).
+/// If present, codeSigning MUST be listed for code signing operations.
+fn validate_eku_for_code_signing(cert_der: &[u8]) -> SignResult<()> {
+    // extendedKeyUsage OID: 2.5.29.37
+    let eku_oid: &[u8] = &[0x06, 0x03, 0x55, 0x1D, 0x25];
+
+    // id-kp-codeSigning OID value bytes: 1.3.6.1.5.5.7.3.3
+    let code_signing_oid_value: &[u8] = &[0x2B, 0x06, 0x01, 0x05, 0x05, 0x07, 0x03, 0x03];
+
+    // anyExtendedKeyUsage OID value bytes: 2.5.29.37.0
+    let any_eku_oid_value: &[u8] = &[0x55, 0x1D, 0x25, 0x00];
+
+    // Search for the EKU extension OID in the certificate DER.
+    let Some(oid_pos) = cert_der.windows(eku_oid.len()).position(|w| w == eku_oid) else {
+        return Ok(()); // No EKU extension — permitted
+    };
+
+    // Scan the region after the EKU OID for the codeSigning or anyExtendedKeyUsage OID
+    let search_region = &cert_der[oid_pos..cert_der.len().min(oid_pos + 200)];
+
+    let has_code_signing = search_region
+        .windows(code_signing_oid_value.len())
+        .any(|w| w == code_signing_oid_value);
+
+    let has_any_eku = search_region
+        .windows(any_eku_oid_value.len())
+        .any(|w| w == any_eku_oid_value);
+
+    if has_code_signing || has_any_eku {
+        return Ok(());
+    }
+
+    Err(SignError::MissingCodeSigningEku)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_file_type_detection() {
+        assert_eq!(
+            FileType::from_extension(Path::new("test.exe")).unwrap(),
+            FileType::Pe
+        );
+        assert_eq!(
+            FileType::from_extension(Path::new("test.dll")).unwrap(),
+            FileType::Pe
+        );
+        assert_eq!(
+            FileType::from_extension(Path::new("test.ps1")).unwrap(),
+            FileType::PowerShell
+        );
+        assert_eq!(
+            FileType::from_extension(Path::new("test.msi")).unwrap(),
+            FileType::Msi
+        );
+        assert!(FileType::from_extension(Path::new("test.txt")).is_err());
+    }
+
+    #[test]
+    fn test_file_type_all_pe_extensions() {
+        for ext in ["exe", "dll", "sys", "ocx", "scr", "cpl", "drv"] {
+            let path = format!("test.{}", ext);
+            assert_eq!(
+                FileType::from_extension(Path::new(&path)).unwrap(),
+                FileType::Pe,
+                "Expected PE for .{}",
+                ext
+            );
+        }
+    }
+
+    #[test]
+    fn test_file_type_cab() {
+        assert_eq!(
+            FileType::from_extension(Path::new("package.cab")).unwrap(),
+            FileType::Cab
+        );
+    }
+
+    #[test]
+    fn test_file_type_case_insensitive() {
+        assert_eq!(
+            FileType::from_extension(Path::new("TEST.EXE")).unwrap(),
+            FileType::Pe
+        );
+        assert_eq!(
+            FileType::from_extension(Path::new("Script.PS1")).unwrap(),
+            FileType::PowerShell
+        );
+    }
+
+    #[test]
+    fn test_file_type_no_extension() {
+        let result = FileType::from_extension(Path::new("binary_no_ext"));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_file_type_unsupported() {
+        let result = FileType::from_extension(Path::new("data.json"));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_file_type_unsupported_returns_extension() {
+        match FileType::from_extension(Path::new("doc.pdf")) {
+            Err(SignError::UnsupportedFileType(ext)) => assert_eq!(ext, "pdf"),
+            other => panic!("Expected UnsupportedFileType, got: {:?}", other),
+        }
+    }
+
+    // ─── Key Usage Validation Tests ───
+
+    #[test]
+    fn test_key_usage_no_extension_permits_signing() {
+        // A minimal cert without any extensions — should be allowed
+        use crate::pkcs7::asn1;
+        let cert = build_minimal_test_cert(None);
+        assert!(validate_key_usage_for_signing(&cert).is_ok());
+    }
+
+    #[test]
+    fn test_key_usage_digital_signature_set() {
+        // Cert with keyUsage = digitalSignature (bit 0 = 0x80) — should be allowed
+        use crate::pkcs7::asn1;
+        let ku_ext = build_key_usage_extension(0x80, true); // digitalSignature
+        let cert = build_minimal_test_cert(Some(&ku_ext));
+        assert!(validate_key_usage_for_signing(&cert).is_ok());
+    }
+
+    #[test]
+    fn test_key_usage_key_cert_sign_only_rejected() {
+        // Cert with keyUsage = keyCertSign only (bit 5 = 0x04) — should be rejected
+        use crate::pkcs7::asn1;
+        let ku_ext = build_key_usage_extension(0x04, true); // keyCertSign only
+        let cert = build_minimal_test_cert(Some(&ku_ext));
+        let result = validate_key_usage_for_signing(&cert);
+        assert!(result.is_err(), "keyCertSign-only cert should be rejected");
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("digitalSignature"),
+            "Error should mention digitalSignature: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_key_usage_both_digital_sig_and_cert_sign() {
+        // Cert with keyUsage = digitalSignature + keyCertSign (0x84) — should be allowed
+        use crate::pkcs7::asn1;
+        let ku_ext = build_key_usage_extension(0x84, true);
+        let cert = build_minimal_test_cert(Some(&ku_ext));
+        assert!(validate_key_usage_for_signing(&cert).is_ok());
+    }
+
+    /// Build a minimal DER-encoded certificate with optional extensions.
+    fn build_minimal_test_cert(extensions_der: Option<&[u8]>) -> Vec<u8> {
+        use crate::pkcs7::asn1;
+        let version = asn1::encode_explicit_tag(0, &asn1::encode_integer_value(2));
+        let serial = asn1::encode_integer_value(1);
+        let algo = asn1::SHA256_ALGORITHM_ID.to_vec();
+        let name = asn1::encode_sequence(&[&asn1::encode_set(&asn1::encode_sequence(&[
+            &[0x06, 0x03, 0x55, 0x04, 0x03][..],
+            &[0x0C, 0x04, 0x54, 0x65, 0x73, 0x74], // UTF8String "Test"
+        ]))]);
+        let validity =
+            asn1::encode_sequence(&[&asn1::encode_utc_time_now(), &asn1::encode_utc_time_now()]);
+        let spki = asn1::encode_sequence(&[
+            &algo,
+            &[0x03, 0x03, 0x00, 0x04, 0x04][..], // BIT STRING (stub public key)
+        ]);
+
+        let mut tbs_parts: Vec<&[u8]> =
+            vec![&version, &serial, &algo, &name, &validity, &name, &spki];
+        let ext_wrapper;
+        if let Some(ext) = extensions_der {
+            ext_wrapper = asn1::encode_explicit_tag(3, &asn1::encode_sequence(&[ext]));
+            tbs_parts.push(&ext_wrapper);
+        }
+        let tbs = asn1::encode_sequence(&tbs_parts);
+        let sig = [0x03, 0x03, 0x00, 0x00, 0x00]; // BIT STRING (stub signature)
+        asn1::encode_sequence(&[&tbs, &algo, &sig])
+    }
+
+    /// Build a DER-encoded keyUsage extension.
+    fn build_key_usage_extension(usage_bits: u8, critical: bool) -> Vec<u8> {
+        use crate::pkcs7::asn1;
+        // keyUsage OID: 2.5.29.15
+        let oid = &[0x06, 0x03, 0x55, 0x1D, 0x0F];
+        let critical_bool = if critical {
+            vec![0x01, 0x01, 0xFF] // BOOLEAN TRUE
+        } else {
+            vec![]
+        };
+        // BIT STRING: tag=0x03, len=0x02, unused_bits=0x00, value=usage_bits
+        let bit_string = vec![0x03, 0x02, 0x00, usage_bits];
+        // OCTET STRING wrapping the BIT STRING
+        let octet_wrapper = asn1::encode_octet_string(&bit_string);
+        let mut parts: Vec<&[u8]> = vec![oid];
+        if !critical_bool.is_empty() {
+            parts.push(&critical_bool);
+        }
+        parts.push(&octet_wrapper);
+        asn1::encode_sequence(&parts)
+    }
+
+    /// Build a DER-encoded extendedKeyUsage extension with the given EKU OIDs.
+    fn build_eku_extension(eku_oids: &[&[u8]]) -> Vec<u8> {
+        use crate::pkcs7::asn1;
+        // extendedKeyUsage OID: 2.5.29.37
+        let ext_oid = &[0x06, 0x03, 0x55, 0x1D, 0x25];
+        // Build SEQUENCE OF OBJECT IDENTIFIER
+        let mut eku_seq_content = Vec::new();
+        for oid_value in eku_oids {
+            // Encode as OID TLV
+            eku_seq_content.push(0x06);
+            eku_seq_content.push(oid_value.len() as u8);
+            eku_seq_content.extend_from_slice(oid_value);
+        }
+        let eku_seq = asn1::encode_sequence(
+            &eku_seq_content
+                .chunks(1)
+                .collect::<Vec<_>>()
+                .iter()
+                .map(|_| &[][..])
+                .collect::<Vec<_>>(),
+        );
+        // Simpler: just build the SEQUENCE manually
+        let mut seq = vec![0x30];
+        if eku_seq_content.len() < 0x80 {
+            seq.push(eku_seq_content.len() as u8);
+        } else {
+            seq.push(0x81);
+            seq.push(eku_seq_content.len() as u8);
+        }
+        seq.extend_from_slice(&eku_seq_content);
+
+        let octet_wrapper = asn1::encode_octet_string(&seq);
+        asn1::encode_sequence(&[ext_oid, &octet_wrapper])
+    }
+
+    // ─── EKU Validation Tests ───
+
+    // id-kp-codeSigning OID value: 1.3.6.1.5.5.7.3.3
+    const CODE_SIGNING_OID: &[u8] = &[0x2B, 0x06, 0x01, 0x05, 0x05, 0x07, 0x03, 0x03];
+    // id-kp-serverAuth OID value: 1.3.6.1.5.5.7.3.1
+    const SERVER_AUTH_OID: &[u8] = &[0x2B, 0x06, 0x01, 0x05, 0x05, 0x07, 0x03, 0x01];
+    // id-kp-emailProtection OID value: 1.3.6.1.5.5.7.3.4
+    const EMAIL_PROTECTION_OID: &[u8] = &[0x2B, 0x06, 0x01, 0x05, 0x05, 0x07, 0x03, 0x04];
+    // anyExtendedKeyUsage OID value: 2.5.29.37.0
+    const ANY_EKU_OID: &[u8] = &[0x55, 0x1D, 0x25, 0x00];
+
+    #[test]
+    fn test_eku_no_extension_permits_signing() {
+        let cert = build_minimal_test_cert(None);
+        assert!(validate_eku_for_code_signing(&cert).is_ok());
+    }
+
+    #[test]
+    fn test_eku_code_signing_present() {
+        let eku_ext = build_eku_extension(&[CODE_SIGNING_OID]);
+        let cert = build_minimal_test_cert(Some(&eku_ext));
+        assert!(validate_eku_for_code_signing(&cert).is_ok());
+    }
+
+    #[test]
+    fn test_eku_server_auth_only_rejected() {
+        let eku_ext = build_eku_extension(&[SERVER_AUTH_OID]);
+        let cert = build_minimal_test_cert(Some(&eku_ext));
+        let result = validate_eku_for_code_signing(&cert);
+        assert!(
+            result.is_err(),
+            "serverAuth-only EKU should be rejected for code signing"
+        );
+        match result.unwrap_err() {
+            SignError::MissingCodeSigningEku => {}
+            other => panic!("Expected MissingCodeSigningEku, got: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_eku_multiple_with_code_signing() {
+        let eku_ext =
+            build_eku_extension(&[SERVER_AUTH_OID, CODE_SIGNING_OID, EMAIL_PROTECTION_OID]);
+        let cert = build_minimal_test_cert(Some(&eku_ext));
+        assert!(validate_eku_for_code_signing(&cert).is_ok());
+    }
+
+    #[test]
+    fn test_eku_any_extended_key_usage_permits() {
+        let eku_ext = build_eku_extension(&[ANY_EKU_OID]);
+        let cert = build_minimal_test_cert(Some(&eku_ext));
+        assert!(validate_eku_for_code_signing(&cert).is_ok());
+    }
+}

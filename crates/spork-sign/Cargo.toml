@@ -1,0 +1,99 @@
+[package]
+name = "spork-sign"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "SPORK Sign - Pure Rust Authenticode Code Signing Service"
+repository.workspace = true
+
+[dependencies]
+# Async runtime & HTTP server
+axum = { workspace = true }
+axum-server = { version = "0.7", features = ["tls-rustls"] }
+tokio = { workspace = true }
+tower-http = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+# CLI
+clap = { workspace = true }
+
+# Interactive setup
+dialoguer = "0.11"
+console = "0.15"
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+toml = { workspace = true }
+chrono = { workspace = true }
+
+# Utilities
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+hex = { workspace = true }
+base64 = { workspace = true }
+uuid = { version = "1.0", features = ["v4", "serde"] }
+rand = { workspace = true }
+colored = "2"
+
+# PE/COFF parsing
+goblin = { version = "0.9", default-features = false, features = ["pe32", "pe64", "std"] }
+
+# Crypto - signing
+sha1 = "0.10"
+sha2 = { version = "0.10", features = ["oid"] }
+sha3 = "0.10"
+rsa = "0.9"
+p256 = { version = "0.13", features = ["ecdsa", "pem", "ecdh"] }
+p384 = { version = "0.13", features = ["ecdsa", "pem", "ecdh"] }
+ed25519-dalek = { version = "2", features = ["pkcs8"] }
+signature = "2"
+pkcs8 = { version = "0.10", features = ["pem"] }
+hkdf = "0.12"
+
+# ASN.1/DER encoding for CMS/PKCS#7
+der = { workspace = true }
+cms = "0.2"
+x509-cert = "0.2"
+const-oid = "0.9"
+spki = "0.7"
+
+# S/MIME content encryption
+aes-gcm = "0.10"
+cbc = { version = "0.1", features = [] }
+aes = { version = "0.8", features = ["zeroize"] }
+aes-kw = "0.2"
+
+# PKCS#12/PFX loading
+p12 = "0.6"
+zeroize = { workspace = true }
+
+# HTTP client (for TSA requests)
+reqwest = { workspace = true }
+
+# TLS for HTTPS server
+rustls = { version = "0.23", default-features = false, features = ["aws-lc-rs", "std"] }
+rustls-pemfile = "2"
+
+# File upload handling
+axum-extra = { version = "0.9", features = ["multipart"] }
+
+# Temp files
+tempfile = "3"
+
+[features]
+default = []
+
+[dev-dependencies]
+tempfile = { workspace = true }
+assert_cmd = { workspace = true }
+predicates = { workspace = true }
+tower = { version = "0.5", features = ["util"] }
+
+[[bin]]
+name = "spork-sign"
+path = "src/main.rs"
+
+[lib]
+path = "src/lib.rs"
