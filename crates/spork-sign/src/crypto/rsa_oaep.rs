@@ -98,9 +98,8 @@ pub fn oaep_decrypt(
     hash: OaepHash,
     label: Option<&str>,
 ) -> SignResult<Zeroizing<Vec<u8>>> {
-    let priv_key = RsaPrivateKey::from_pkcs8_der(private_key_der).map_err(|e| {
-        SignError::Internal(format!("RSA OAEP: invalid PKCS#8 private key: {}", e))
-    })?;
+    let priv_key = RsaPrivateKey::from_pkcs8_der(private_key_der)
+        .map_err(|e| SignError::Internal(format!("RSA OAEP: invalid PKCS#8 private key: {}", e)))?;
 
     let label_str = label.unwrap_or("");
 
@@ -162,16 +161,8 @@ mod tests {
         let mut rng = OsRng;
         let priv_key = RsaPrivateKey::new(&mut rng, 2048).unwrap();
         let pub_key = RsaPublicKey::from(&priv_key);
-        let pub_der = pub_key
-            .to_public_key_der()
-            .unwrap()
-            .as_ref()
-            .to_vec();
-        let priv_der = priv_key
-            .to_pkcs8_der()
-            .unwrap()
-            .as_bytes()
-            .to_vec();
+        let pub_der = pub_key.to_public_key_der().unwrap().as_ref().to_vec();
+        let priv_der = priv_key.to_pkcs8_der().unwrap().as_bytes().to_vec();
         (pub_der, priv_der)
     }
 

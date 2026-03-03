@@ -72,26 +72,20 @@ pub fn hkdf_derive(
 
     match hash {
         HkdfHash::Sha256 => {
-            let hk = hkdf::Hkdf::<Sha256>::new(
-                if salt.is_empty() { None } else { Some(salt) },
-                ikm,
-            );
+            let hk =
+                hkdf::Hkdf::<Sha256>::new(if salt.is_empty() { None } else { Some(salt) }, ikm);
             hk.expand(info, &mut okm)
                 .map_err(|_| SignError::Internal("HKDF-Expand failed".to_string()))?;
         }
         HkdfHash::Sha384 => {
-            let hk = hkdf::Hkdf::<Sha384>::new(
-                if salt.is_empty() { None } else { Some(salt) },
-                ikm,
-            );
+            let hk =
+                hkdf::Hkdf::<Sha384>::new(if salt.is_empty() { None } else { Some(salt) }, ikm);
             hk.expand(info, &mut okm)
                 .map_err(|_| SignError::Internal("HKDF-Expand failed".to_string()))?;
         }
         HkdfHash::Sha512 => {
-            let hk = hkdf::Hkdf::<Sha512>::new(
-                if salt.is_empty() { None } else { Some(salt) },
-                ikm,
-            );
+            let hk =
+                hkdf::Hkdf::<Sha512>::new(if salt.is_empty() { None } else { Some(salt) }, ikm);
             hk.expand(info, &mut okm)
                 .map_err(|_| SignError::Internal("HKDF-Expand failed".to_string()))?;
         }

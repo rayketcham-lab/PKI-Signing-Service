@@ -35,11 +35,11 @@ pub use builder::{
 
 pub use digested::{verify_digested_data, DigestedDataBuilder, DigestedDataInfo};
 
+pub use crate::crypto::rsa_oaep::OaepHash;
 pub use enveloped::{
     decrypt_enveloped_data, decrypt_enveloped_data_ecdh, decrypt_enveloped_data_kem,
     ContentEncryptionAlgorithm, EnvelopedDataBuilder, KeyAgreeRecipientInfo, KeyTransRecipientInfo,
 };
-pub use crate::crypto::rsa_oaep::OaepHash;
 
 pub use ecdh::{EcdhCurve, KeyWrapAlgorithm};
 
