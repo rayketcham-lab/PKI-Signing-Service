@@ -2390,7 +2390,7 @@ dependencies = [
 
 [[package]]
 name = "spork-sign"
-version = "0.3.0-beta.1"
+version = "0.3.0-beta.2"
 dependencies = [
  "aes",
  "aes-gcm",
