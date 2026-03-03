@@ -121,6 +121,9 @@ jobs:
       - name: Install cargo-audit
         run: which cargo-audit || cargo install cargo-audit --locked
       - name: Run audit
+        env:
+          GITHUB_TOKEN: ""
+          GIT_TERMINAL_PROMPT: "0"
         run: |
           git config --unset-all http.https://github.com/.extraheader || true
           git config --global --unset-all http.https://github.com/.extraheader || true
