@@ -115,6 +115,8 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4.3.1
+        with:
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7  # stable
       - name: Install cargo-audit
         run: which cargo-audit || cargo install cargo-audit --locked
@@ -134,4 +136,9 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4.3.1
+        with:
+          persist-credentials: false
       - uses: EmbarkStudios/cargo-deny-action@v2
+        env:
+          GITHUB_TOKEN: ""
+          GIT_TERMINAL_PROMPT: "0"
