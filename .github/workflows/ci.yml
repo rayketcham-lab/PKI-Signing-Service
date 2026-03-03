@@ -120,8 +120,13 @@ jobs:
         run: which cargo-audit || cargo install cargo-audit --locked
       - name: Run audit
         run: |
+          git config --unset-all http.https://github.com/.extraheader || true
           git config --global --unset-all http.https://github.com/.extraheader || true
-          cargo audit --ignore RUSTSEC-2023-0071
+          for attempt in 1 2 3; do
+            cargo audit --ignore RUSTSEC-2023-0071 && break
+            echo "Attempt $attempt failed, retrying..."
+            sleep 5
+          done
 
   cargo-deny:
     name: Dependency audit (cargo-deny)
