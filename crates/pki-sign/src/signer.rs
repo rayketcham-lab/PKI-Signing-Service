@@ -1041,4 +1041,336 @@ mod tests {
         let cert = build_minimal_test_cert(Some(&eku_ext));
         assert!(validate_eku_for_code_signing(&cert).is_ok());
     }
+
+    // ─── End-to-End Sign → Verify Tests ───
+
+    /// Generate a PFX file in the given temp directory using openssl CLI.
+    ///
+    /// Creates a self-signed cert with codeSigning EKU + digitalSignature keyUsage,
+    /// packages it with the private key into a PKCS#12 file, and returns
+    /// (pfx_path, password). Uses legacy encryption for compatibility with the
+    /// `p12` crate v0.6.
+    fn generate_test_pfx(temp_dir: &std::path::Path) -> (std::path::PathBuf, String) {
+        let key_path = temp_dir.join("test.key");
+        let cert_path = temp_dir.join("test.crt");
+        let pfx_path = temp_dir.join("test.pfx");
+        let password = "testpass123";
+
+        // Generate 2048-bit RSA key
+        let key_output = std::process::Command::new("openssl")
+            .args(["genrsa", "-out"])
+            .arg(&key_path)
+            .arg("2048")
+            .output()
+            .expect("openssl genrsa failed to execute");
+        assert!(
+            key_output.status.success(),
+            "openssl genrsa failed: {}",
+            String::from_utf8_lossy(&key_output.stderr)
+        );
+
+        // Generate self-signed cert with codeSigning EKU and digitalSignature keyUsage
+        let cert_output = std::process::Command::new("openssl")
+            .args(["req", "-new", "-x509", "-key"])
+            .arg(&key_path)
+            .args(["-out"])
+            .arg(&cert_path)
+            .args(["-days", "365", "-subj", "/CN=Test Code Signing/O=Test"])
+            .args(["-addext", "keyUsage=critical,digitalSignature"])
+            .args(["-addext", "extendedKeyUsage=codeSigning"])
+            .output()
+            .expect("openssl req failed to execute");
+        assert!(
+            cert_output.status.success(),
+            "openssl req failed: {}",
+            String::from_utf8_lossy(&cert_output.stderr)
+        );
+
+        // Create PFX with legacy encryption (required for p12 crate v0.6 compatibility)
+        let pfx_output = std::process::Command::new("openssl")
+            .args(["pkcs12", "-export", "-out"])
+            .arg(&pfx_path)
+            .args(["-inkey"])
+            .arg(&key_path)
+            .args(["-in"])
+            .arg(&cert_path)
+            .args([
+                "-certpbe",
+                "PBE-SHA1-3DES",
+                "-keypbe",
+                "PBE-SHA1-3DES",
+                "-macalg",
+                "sha1",
+            ])
+            .args(["-passout", &format!("pass:{}", password)])
+            .output()
+            .expect("openssl pkcs12 failed to execute");
+        assert!(
+            pfx_output.status.success(),
+            "openssl pkcs12 export failed: {}",
+            String::from_utf8_lossy(&pfx_output.stderr)
+        );
+
+        (pfx_path, password.to_string())
+    }
+
+    /// Generate a PFX file without codeSigning EKU (only digitalSignature keyUsage).
+    ///
+    /// Used for detached signing tests where codeSigning EKU is not required.
+    fn generate_test_pfx_detached(temp_dir: &std::path::Path) -> (std::path::PathBuf, String) {
+        let key_path = temp_dir.join("detached.key");
+        let cert_path = temp_dir.join("detached.crt");
+        let pfx_path = temp_dir.join("detached.pfx");
+        let password = "testpass123";
+
+        let key_output = std::process::Command::new("openssl")
+            .args(["genrsa", "-out"])
+            .arg(&key_path)
+            .arg("2048")
+            .output()
+            .expect("openssl genrsa failed to execute");
+        assert!(
+            key_output.status.success(),
+            "openssl genrsa failed: {}",
+            String::from_utf8_lossy(&key_output.stderr)
+        );
+
+        // No EKU extension — only digitalSignature keyUsage
+        let cert_output = std::process::Command::new("openssl")
+            .args(["req", "-new", "-x509", "-key"])
+            .arg(&key_path)
+            .args(["-out"])
+            .arg(&cert_path)
+            .args(["-days", "365", "-subj", "/CN=Test Detached Signer/O=Test"])
+            .args(["-addext", "keyUsage=critical,digitalSignature"])
+            .output()
+            .expect("openssl req failed to execute");
+        assert!(
+            cert_output.status.success(),
+            "openssl req failed: {}",
+            String::from_utf8_lossy(&cert_output.stderr)
+        );
+
+        let pfx_output = std::process::Command::new("openssl")
+            .args(["pkcs12", "-export", "-out"])
+            .arg(&pfx_path)
+            .args(["-inkey"])
+            .arg(&key_path)
+            .args(["-in"])
+            .arg(&cert_path)
+            .args([
+                "-certpbe",
+                "PBE-SHA1-3DES",
+                "-keypbe",
+                "PBE-SHA1-3DES",
+                "-macalg",
+                "sha1",
+            ])
+            .args(["-passout", &format!("pass:{}", password)])
+            .output()
+            .expect("openssl pkcs12 failed to execute");
+        assert!(
+            pfx_output.status.success(),
+            "openssl pkcs12 export failed: {}",
+            String::from_utf8_lossy(&pfx_output.stderr)
+        );
+
+        (pfx_path, password.to_string())
+    }
+
+    /// Build a minimal valid PE32 file for signing tests.
+    ///
+    /// Creates a PE with MZ header, PE signature, COFF header, optional header
+    /// with 16 data directories, and one section. The section raw data is placed
+    /// at offset 0x200 with size 0x200, making end_of_image = 0x400.
+    fn build_test_pe() -> Vec<u8> {
+        let mut pe = vec![0u8; 0x400]; // 1024 bytes total
+
+        // DOS header — MZ magic
+        pe[0] = b'M';
+        pe[1] = b'Z';
+        // e_lfanew at offset 0x3C — PE header at 0x80
+        pe[0x3C] = 0x80;
+
+        // PE signature at 0x80
+        pe[0x80] = b'P';
+        pe[0x81] = b'E';
+        pe[0x82] = 0;
+        pe[0x83] = 0;
+
+        // COFF header at 0x84
+        pe[0x84] = 0x4C; // Machine = i386
+        pe[0x85] = 0x01;
+        pe[0x86] = 0x01; // NumberOfSections = 1
+        pe[0x87] = 0x00;
+        // SizeOfOptionalHeader at offset 0x94 (COFF + 16)
+        pe[0x94] = 0xE0; // 224 bytes — standard PE32
+        pe[0x95] = 0x00;
+        // Characteristics at 0x96
+        pe[0x96] = 0x02; // EXECUTABLE_IMAGE
+        pe[0x97] = 0x01; // 32BIT_MACHINE
+
+        // Optional header at 0x98
+        pe[0x98] = 0x0B; // PE32 magic
+        pe[0x99] = 0x01;
+        // SizeOfHeaders at opt+60 = 0x98+60 = 0xD4
+        pe[0xD4] = 0x00;
+        pe[0xD5] = 0x02; // 0x200
+
+        // NumberOfRvaAndSizes at opt+92 = 0x98+92 = 0xF4
+        pe[0xF4] = 16; // 16 data directories
+
+        // Certificate table is data directory index 4 at opt+96+4*8 = 0x98+96+32 = 0x118
+        // Leave zeroed (unsigned)
+
+        // Section header at opt + SizeOfOptionalHeader = 0x98 + 0xE0 = 0x178
+        // Name: ".text\0\0\0"
+        pe[0x178] = b'.';
+        pe[0x179] = b't';
+        pe[0x17A] = b'e';
+        pe[0x17B] = b'x';
+        pe[0x17C] = b't';
+        // SizeOfRawData at section+16 = 0x178+16 = 0x188
+        pe[0x188] = 0x00;
+        pe[0x189] = 0x02; // 0x200 = 512 bytes
+                          // PointerToRawData at section+20 = 0x178+20 = 0x18C
+        pe[0x18C] = 0x00;
+        pe[0x18D] = 0x02; // starts at 0x200
+
+        // Fill section data with non-zero bytes to make a meaningful hash
+        for (i, byte) in pe[0x200..0x400].iter_mut().enumerate() {
+            *byte = ((0x200 + i) & 0xFF) as u8;
+        }
+
+        pe
+    }
+
+    #[tokio::test]
+    async fn e2e_detached_sign_then_verify() {
+        let dir = tempfile::tempdir().expect("create temp dir");
+        let (pfx_path, password) = generate_test_pfx_detached(dir.path());
+        let creds = SigningCredentials::from_pfx_detached(&pfx_path, &password)
+            .expect("from_pfx_detached should succeed");
+
+        // Write test content to a temp file
+        let input_path = dir.path().join("testfile.bin");
+        std::fs::write(
+            &input_path,
+            b"Hello, world! This is test content for detached signing.",
+        )
+        .expect("write test file");
+
+        // Sign
+        let result = sign_detached(&input_path, &creds, None)
+            .await
+            .expect("sign_detached should succeed");
+
+        assert!(!result.p7s_data.is_empty(), "p7s_data should not be empty");
+        assert!(
+            !result.file_hash.is_empty(),
+            "file_hash should not be empty"
+        );
+
+        // Verify
+        let file_content = std::fs::read(&input_path).expect("read test file");
+        let verify_result = crate::verifier::verify_detached(&file_content, &result.p7s_data)
+            .expect("verify_detached should succeed");
+
+        assert!(
+            verify_result.signature_valid,
+            "Detached signature should be valid, computed={} signed={}",
+            verify_result.computed_digest, verify_result.signed_digest
+        );
+    }
+
+    #[tokio::test]
+    async fn e2e_detached_sign_verify_tampered_fails() {
+        let dir = tempfile::tempdir().expect("create temp dir");
+        let (pfx_path, password) = generate_test_pfx_detached(dir.path());
+        let creds = SigningCredentials::from_pfx_detached(&pfx_path, &password)
+            .expect("from_pfx_detached should succeed");
+
+        let input_path = dir.path().join("testfile.bin");
+        std::fs::write(&input_path, b"Original content for tamper test.").expect("write test file");
+
+        // Sign the original content
+        let result = sign_detached(&input_path, &creds, None)
+            .await
+            .expect("sign_detached should succeed");
+
+        // Verify with tampered content — different bytes than what was signed
+        let tampered_content = b"TAMPERED content that differs from the original.";
+        let verify_result = crate::verifier::verify_detached(tampered_content, &result.p7s_data)
+            .expect("verify_detached should succeed even with tampered data");
+
+        assert!(
+            !verify_result.signature_valid,
+            "Tampered content should fail signature verification"
+        );
+    }
+
+    #[test]
+    fn e2e_pe_sign_then_verify() {
+        let dir = tempfile::tempdir().expect("create temp dir");
+        let (pfx_path, password) = generate_test_pfx(dir.path());
+        let creds =
+            SigningCredentials::from_pfx(&pfx_path, &password).expect("from_pfx should succeed");
+
+        let pe_data = build_test_pe();
+
+        // Verify the test PE parses correctly before signing
+        let pe_info = crate::pe::PeInfo::parse(&pe_data).expect("test PE should parse");
+        assert!(!pe_info.is_signed(), "test PE should be unsigned");
+
+        // Sign the PE
+        let signed_pe = sign_pe_bytes(&pe_data, &creds).expect("sign_pe_bytes should succeed");
+        assert!(
+            signed_pe.len() > pe_data.len(),
+            "signed PE should be larger"
+        );
+
+        // Write signed PE and verify
+        let signed_path = dir.path().join("signed.exe");
+        std::fs::write(&signed_path, &signed_pe).expect("write signed PE");
+
+        let verify_result =
+            crate::verifier::verify_file(&signed_path).expect("verify_file should succeed");
+
+        assert!(
+            verify_result.signature_valid,
+            "PE signature should be valid, computed={} signed={}",
+            verify_result.computed_digest, verify_result.signed_digest
+        );
+    }
+
+    #[tokio::test]
+    async fn e2e_powershell_sign_then_verify() {
+        let dir = tempfile::tempdir().expect("create temp dir");
+        let (pfx_path, password) = generate_test_pfx(dir.path());
+        let creds =
+            SigningCredentials::from_pfx(&pfx_path, &password).expect("from_pfx should succeed");
+
+        let input_path = dir.path().join("test.ps1");
+        let output_path = dir.path().join("signed.ps1");
+
+        let script = "Write-Host 'Hello from PowerShell'\r\nGet-Date";
+        std::fs::write(&input_path, script).expect("write test script");
+
+        // Sign
+        let _result = sign_file(&input_path, &output_path, &creds, None)
+            .await
+            .expect("sign_file should succeed for PS1");
+
+        assert!(output_path.exists(), "signed PS1 output file should exist");
+
+        // Verify
+        let verify_result =
+            crate::verifier::verify_file(&output_path).expect("verify_file should succeed");
+
+        assert!(
+            verify_result.signature_valid,
+            "PowerShell signature should be valid, computed={} signed={}",
+            verify_result.computed_digest, verify_result.signed_digest
+        );
+    }
 }

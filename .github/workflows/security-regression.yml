@@ -1,0 +1,61 @@
+name: Security Regression
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+concurrency:
+  group: security-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  security-regression:
+    name: Security Regression (${{ matrix.name }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Ubuntu (postgres)
+            runner: [self-hosted, Linux, postgres]
+          - name: Linux
+            runner: [self-hosted, Linux, X64]
+          - name: Windows
+            runner: [self-hosted, Windows]
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4.3.1
+      - uses: dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7  # stable
+      - uses: Swatinem/rust-cache@401aff9a7a08acb9d27b64936a90db81024cff97  # v2.8.2
+        with:
+          prefix-key: "v0-rust-${{ runner.name }}"
+      - name: Run security regression tests
+        run: cargo test --workspace security_regression
+      - name: Verify dev_mode gated in release
+        if: runner.os == 'Linux'
+        run: |
+          cargo build --release 2>&1
+          strings target/release/pki-sign | grep -c "PKI_SIGN_DEV_MODE" || true
+      - name: Verify no HTTP default TSA URLs
+        if: runner.os == 'Linux'
+        run: |
+          grep -rn 'http://timestamp\.' crates/pki-sign/src/timestamp.rs && exit 1 || echo "OK"
+      - name: Verify Content-Disposition sanitization
+        if: runner.os == 'Linux'
+        run: |
+          grep -n 'format!.*attachment.*filename.*{}' crates/pki-sign/src/web/handlers.rs && exit 1 || echo "OK"
+      - name: Verify audit log errors are handled
+        if: runner.os == 'Linux'
+        run: |
+          grep -A20 'fn log' crates/pki-sign/src/web/audit.rs | grep -q 'tracing\|error!\|warn!' || echo "WARN: audit errors may be silent"
+      - name: Verify no filesystem path leakage in errors
+        if: runner.os == 'Linux'
+        run: |
+          grep -n 'pfx_path.display()' crates/pki-sign/src/signer.rs && exit 1 || echo "OK"

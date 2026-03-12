@@ -18,7 +18,7 @@ concurrency:
 jobs:
   fmt:
     name: Format
-    runs-on: self-hosted
+    runs-on: [self-hosted, Linux]
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4.3.1
@@ -30,7 +30,7 @@ jobs:
   clippy:
     name: Clippy
     needs: [fmt]
-    runs-on: self-hosted
+    runs-on: [self-hosted, Linux]
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4.3.1
@@ -43,10 +43,20 @@ jobs:
       - run: cargo clippy --all-targets --workspace -- -D warnings
 
   test:
-    name: Test
+    name: Test (${{ matrix.name }})
     needs: [fmt, clippy]
-    runs-on: self-hosted
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Ubuntu (postgres)
+            runner: [self-hosted, Linux, postgres]
+          - name: Linux
+            runner: [self-hosted, Linux, X64]
+          - name: Windows
+            runner: [self-hosted, Windows]
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4.3.1
       - uses: dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7  # stable
@@ -56,10 +66,18 @@ jobs:
       - run: cargo test --workspace
 
   build:
-    name: Build
+    name: Build (${{ matrix.name }})
     needs: [fmt, clippy]
-    runs-on: self-hosted
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux
+            runner: [self-hosted, Linux]
+          - name: Windows
+            runner: [self-hosted, Windows]
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4.3.1
       - uses: dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7  # stable
@@ -67,7 +85,8 @@ jobs:
         with:
           prefix-key: "v0-rust-${{ runner.name }}"
       - run: cargo build --release
-      - name: Verify binary built
+      - name: Verify binary built (Linux)
+        if: runner.os == 'Linux'
         run: |
           if [ ! -f "target/release/pki-sign" ]; then
             echo "ERROR: pki-sign binary not found"
@@ -75,11 +94,22 @@ jobs:
           fi
           VERSION=$(./target/release/pki-sign --version 2>&1 || true)
           echo "OK: $VERSION ($(du -h target/release/pki-sign | cut -f1))"
+      - name: Verify binary built (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "target\release\pki-sign.exe")) {
+            Write-Error "ERROR: pki-sign.exe not found"
+            exit 1
+          }
+          $version = & "target\release\pki-sign.exe" --version 2>&1
+          $size = (Get-Item "target\release\pki-sign.exe").Length / 1MB
+          Write-Host "OK: $version ($([math]::Round($size, 1)) MB)"
 
   build-musl:
     name: Build (musl static)
     needs: [fmt, clippy]
-    runs-on: self-hosted
+    runs-on: [self-hosted, Linux]
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4.3.1
@@ -93,7 +123,8 @@ jobs:
         run: |
           if ! command -v musl-gcc &> /dev/null; then
             if command -v apt-get &> /dev/null; then
-              sudo apt-get update && sudo apt-get install -y musl-tools
+              sudo apt-get update
+              sudo apt-get install -y musl-tools
             elif command -v dnf &> /dev/null; then
               sudo dnf install -y musl-devel || echo "musl-gcc not in repos, must be pre-installed"
               command -v musl-gcc || exit 1
@@ -111,7 +142,7 @@ jobs:
 
   audit:
     name: Security Audit
-    runs-on: self-hosted
+    runs-on: [self-hosted, Linux]
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4.3.1
