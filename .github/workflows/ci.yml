@@ -53,17 +53,34 @@ jobs:
         include:
           - name: Ubuntu (postgres)
             runner: [self-hosted, Linux, postgres]
+            os: Linux
           - name: Linux
             runner: [self-hosted, Linux, X64]
+            os: Linux
           - name: Windows
             runner: [self-hosted, Windows]
+            os: Windows
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4.3.1
-      - uses: dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7  # stable
+      - name: Setup Rust (Linux)
+        if: matrix.os == 'Linux'
+        uses: dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7  # stable
+      - name: Setup Rust (Windows)
+        if: matrix.os == 'Windows'
+        shell: pwsh
+        run: |
+          rustup default stable
+          rustup update stable
       - uses: Swatinem/rust-cache@401aff9a7a08acb9d27b64936a90db81024cff97  # v2.8.2
         with:
           prefix-key: "v0-rust-${{ runner.name }}"
-      - run: cargo test --workspace
+      - name: Run tests (Linux)
+        if: matrix.os == 'Linux'
+        run: cargo test --workspace
+      - name: Run tests (Windows)
+        if: matrix.os == 'Windows'
+        shell: pwsh
+        run: cargo test --workspace
 
   build:
     name: Build (${{ matrix.name }})
@@ -76,17 +93,33 @@ jobs:
         include:
           - name: Linux
             runner: [self-hosted, Linux]
+            os: Linux
           - name: Windows
             runner: [self-hosted, Windows]
+            os: Windows
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4.3.1
-      - uses: dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7  # stable
+      - name: Setup Rust (Linux)
+        if: matrix.os == 'Linux'
+        uses: dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7  # stable
+      - name: Setup Rust (Windows)
+        if: matrix.os == 'Windows'
+        shell: pwsh
+        run: |
+          rustup default stable
+          rustup update stable
       - uses: Swatinem/rust-cache@401aff9a7a08acb9d27b64936a90db81024cff97  # v2.8.2
         with:
           prefix-key: "v0-rust-${{ runner.name }}"
-      - run: cargo build --release
+      - name: Build release (Linux)
+        if: matrix.os == 'Linux'
+        run: cargo build --release
+      - name: Build release (Windows)
+        if: matrix.os == 'Windows'
+        shell: pwsh
+        run: cargo build --release
       - name: Verify binary built (Linux)
-        if: runner.os == 'Linux'
+        if: matrix.os == 'Linux'
         run: |
           if [ ! -f "target/release/pki-sign" ]; then
             echo "ERROR: pki-sign binary not found"
@@ -95,7 +128,7 @@ jobs:
           VERSION=$(./target/release/pki-sign --version 2>&1 || true)
           echo "OK: $VERSION ($(du -h target/release/pki-sign | cut -f1))"
       - name: Verify binary built (Windows)
-        if: runner.os == 'Windows'
+        if: matrix.os == 'Windows'
         shell: pwsh
         run: |
           if (-not (Test-Path "target\release\pki-sign.exe")) {

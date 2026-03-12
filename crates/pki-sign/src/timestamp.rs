@@ -31,8 +31,8 @@ impl Default for TsaConfig {
     fn default() -> Self {
         Self {
             urls: vec![
-                "http://timestamp.digicert.com".into(),
-                "http://timestamp.comodoca.com".into(),
+                "https://timestamp.digicert.com".into(),
+                "https://timestamp.sectigo.com".into(),
             ],
             timeout_secs: 30,
         }
