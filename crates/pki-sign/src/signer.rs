@@ -129,11 +129,7 @@ impl SigningCredentials {
 /// Load PFX and extract key material (shared between from_pfx and from_pfx_detached).
 fn load_pfx(pfx_path: &Path, password: &str) -> SignResult<(RsaPrivateKey, Vec<u8>, Vec<Vec<u8>>)> {
     let pfx_data = std::fs::read(pfx_path).map_err(|e| {
-        SignError::Certificate(format!(
-            "Failed to read PFX file {}: {}",
-            pfx_path.display(),
-            e
-        ))
+        SignError::Certificate(format!("Failed to read PFX file: {e}"))
     })?;
 
     let pfx = p12::PFX::parse(&pfx_data)
