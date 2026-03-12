@@ -67,7 +67,7 @@ jobs:
         uses: dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7  # stable
       - name: Setup Rust (Windows)
         if: matrix.os == 'Windows'
-        shell: pwsh
+        shell: powershell
         run: |
           rustup default stable
           rustup update stable
@@ -79,7 +79,7 @@ jobs:
         run: cargo test --workspace
       - name: Run tests (Windows)
         if: matrix.os == 'Windows'
-        shell: pwsh
+        shell: powershell
         run: cargo test --workspace
 
   build:
@@ -104,7 +104,7 @@ jobs:
         uses: dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7  # stable
       - name: Setup Rust (Windows)
         if: matrix.os == 'Windows'
-        shell: pwsh
+        shell: powershell
         run: |
           rustup default stable
           rustup update stable
@@ -116,7 +116,7 @@ jobs:
         run: cargo build --release
       - name: Build release (Windows)
         if: matrix.os == 'Windows'
-        shell: pwsh
+        shell: powershell
         run: cargo build --release
       - name: Verify binary built (Linux)
         if: matrix.os == 'Linux'
@@ -129,7 +129,7 @@ jobs:
           echo "OK: $VERSION ($(du -h target/release/pki-sign | cut -f1))"
       - name: Verify binary built (Windows)
         if: matrix.os == 'Windows'
-        shell: pwsh
+        shell: powershell
         run: |
           if (-not (Test-Path "target\release\pki-sign.exe")) {
             Write-Error "ERROR: pki-sign.exe not found"

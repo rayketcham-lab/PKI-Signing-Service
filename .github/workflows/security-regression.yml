@@ -40,7 +40,7 @@ jobs:
         uses: dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7  # stable
       - name: Setup Rust (Windows)
         if: matrix.os == 'Windows'
-        shell: pwsh
+        shell: powershell
         run: |
           rustup default stable
           rustup update stable
@@ -52,7 +52,7 @@ jobs:
         run: cargo test --workspace security_regression
       - name: Run security regression tests (Windows)
         if: matrix.os == 'Windows'
-        shell: pwsh
+        shell: powershell
         run: cargo test --workspace security_regression
       - name: Verify dev_mode gated in release
         if: matrix.os == 'Linux'
