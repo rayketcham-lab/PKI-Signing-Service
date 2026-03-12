@@ -17,6 +17,25 @@ use super::ldap::UserInfo;
 use super::AppState;
 use crate::error::{AppError, SignError};
 
+/// Sanitize a user-supplied filename for use in Content-Disposition headers.
+///
+/// Strips directory separators, control characters, quotes, and newlines
+/// to prevent header injection. Truncates to 255 bytes.
+fn sanitize_filename(name: &str) -> String {
+    let basename = name.rsplit(['/', '\\']).next().unwrap_or(name);
+    let sanitized: String = basename
+        .chars()
+        .filter(|c| !c.is_control() && *c != '"' && *c != '\'' && *c != ';')
+        .collect();
+    if sanitized.len() > 255 {
+        sanitized[..255].to_string()
+    } else if sanitized.is_empty() {
+        "download".to_string()
+    } else {
+        sanitized
+    }
+}
+
 // ─── Public API Handlers ─────────────────────────────────────────────
 
 /// GET /api/v1/health — Simple health check.
@@ -270,7 +289,7 @@ pub async fn sign_file(
     );
     headers.insert(
         header::CONTENT_DISPOSITION,
-        format!("attachment; filename=\"{}\"", filename)
+        format!("attachment; filename=\"{}\"", sanitize_filename(&filename))
             .parse()
             .unwrap(),
     );
@@ -424,10 +443,12 @@ pub async fn sign_detached(
             header::CONTENT_DISPOSITION,
             format!(
                 "attachment; filename=\"{}.p7s\"",
-                std::path::Path::new(&filename)
-                    .file_stem()
-                    .and_then(|s| s.to_str())
-                    .unwrap_or("signature")
+                sanitize_filename(
+                    std::path::Path::new(&filename)
+                        .file_stem()
+                        .and_then(|s| s.to_str())
+                        .unwrap_or("signature")
+                )
             )
             .parse()
             .unwrap(),

@@ -74,7 +74,7 @@ jobs:
       - name: Verify Content-Disposition sanitization
         if: matrix.os == 'Linux'
         run: |
-          grep -n 'format!.*attachment.*filename.*{}' crates/pki-sign/src/web/handlers.rs && exit 1 || echo "OK"
+          grep -n 'CONTENT_DISPOSITION' crates/pki-sign/src/web/handlers.rs -A5 | grep -v sanitize_filename | grep -q 'filename.*{}' && exit 1 || echo "OK"
       - name: Verify audit log errors are handled
         if: matrix.os == 'Linux'
         run: |

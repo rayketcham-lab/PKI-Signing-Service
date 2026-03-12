@@ -1044,6 +1044,15 @@ mod tests {
 
     // ─── End-to-End Sign → Verify Tests ───
 
+    /// Check if openssl CLI is available (not present on Windows CI runners).
+    fn has_openssl() -> bool {
+        std::process::Command::new("openssl")
+            .arg("version")
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false)
+    }
+
     /// Generate a PFX file in the given temp directory using openssl CLI.
     ///
     /// Creates a self-signed cert with codeSigning EKU + digitalSignature keyUsage,
@@ -1247,6 +1256,10 @@ mod tests {
 
     #[tokio::test]
     async fn e2e_detached_sign_then_verify() {
+        if !has_openssl() {
+            eprintln!("skipping: openssl CLI not available");
+            return;
+        }
         let dir = tempfile::tempdir().expect("create temp dir");
         let (pfx_path, password) = generate_test_pfx_detached(dir.path());
         let creds = SigningCredentials::from_pfx_detached(&pfx_path, &password)
@@ -1285,6 +1298,10 @@ mod tests {
 
     #[tokio::test]
     async fn e2e_detached_sign_verify_tampered_fails() {
+        if !has_openssl() {
+            eprintln!("skipping: openssl CLI not available");
+            return;
+        }
         let dir = tempfile::tempdir().expect("create temp dir");
         let (pfx_path, password) = generate_test_pfx_detached(dir.path());
         let creds = SigningCredentials::from_pfx_detached(&pfx_path, &password)
@@ -1311,6 +1328,10 @@ mod tests {
 
     #[test]
     fn e2e_pe_sign_then_verify() {
+        if !has_openssl() {
+            eprintln!("skipping: openssl CLI not available");
+            return;
+        }
         let dir = tempfile::tempdir().expect("create temp dir");
         let (pfx_path, password) = generate_test_pfx(dir.path());
         let creds =
@@ -1345,6 +1366,10 @@ mod tests {
 
     #[tokio::test]
     async fn e2e_powershell_sign_then_verify() {
+        if !has_openssl() {
+            eprintln!("skipping: openssl CLI not available");
+            return;
+        }
         let dir = tempfile::tempdir().expect("create temp dir");
         let (pfx_path, password) = generate_test_pfx(dir.path());
         let creds =
