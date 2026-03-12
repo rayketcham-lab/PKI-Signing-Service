@@ -1,8 +1,8 @@
-# SPORK Sign -- Code Signing Engine
+# PKI Signing Service -- Code Signing Engine
 
-Standalone code signing engine -- Authenticode, PKCS#7, RFC 3161 timestamping.
+Standalone code signing engine -- Authenticode, PKCS#7, RFC 3161 timestamping, detached CMS signing.
 
-**Version:** 0.3.0-beta.1 | **Extracted from:** spork-ca engine | **Date:** 2026-03-02
+**Version:** 0.3.0-beta.2 | **License:** MIT | **Date:** 2026-03-12
 
 ## MANDATORY Rules
 ### Bash Commands: NO CHAINING (CRITICAL)
@@ -13,7 +13,7 @@ Standalone code signing engine -- Authenticode, PKCS#7, RFC 3161 timestamping.
 - NEVER copy code from GitHub, Stack Overflow, or other projects
 
 ## Architecture
-- `crates/spork-sign/` -- Code signing engine, PFX import, Authenticode, PowerShell, TSA
+- `crates/pki-sign/` -- Code signing engine, PFX import, Authenticode, PowerShell, TSA, detached CMS, LDAP auth
 
 ## Quick Reference
 ```bash

@@ -66,57 +66,10 @@ pub struct SigningCredentials {
 
 impl SigningCredentials {
     /// Load signing credentials from a PFX/PKCS#12 file.
+    ///
+    /// Validates that the certificate has the codeSigning EKU (required for Authenticode).
     pub fn from_pfx(pfx_path: &Path, password: &str) -> SignResult<Self> {
-        let pfx_data = std::fs::read(pfx_path).map_err(|e| {
-            SignError::Certificate(format!(
-                "Failed to read PFX file {}: {}",
-                pfx_path.display(),
-                e
-            ))
-        })?;
-
-        let pfx = p12::PFX::parse(&pfx_data)
-            .map_err(|e| SignError::Certificate(format!("Failed to parse PFX: {e}")))?;
-
-        // Verify the MAC to ensure correct password
-        if !pfx.verify_mac(password) {
-            return Err(SignError::Certificate(
-                "PFX password incorrect (MAC verification failed)".into(),
-            ));
-        }
-
-        // Extract private key(s) — PKCS#8 DER format
-        let key_bags = pfx
-            .key_bags(password)
-            .map_err(|e| SignError::Certificate(format!("Failed to extract private key: {e}")))?;
-
-        if key_bags.is_empty() {
-            return Err(SignError::Certificate(
-                "PFX contains no private keys".into(),
-            ));
-        }
-
-        // Wrap key material in Zeroizing for secure cleanup
-        let key_der = Zeroizing::new(key_bags[0].clone());
-
-        // Parse as RSA private key from PKCS#8 DER
-        let rsa_key = RsaPrivateKey::from_pkcs8_der(&key_der)
-            .map_err(|e| SignError::Certificate(format!("Failed to parse RSA private key: {e}")))?;
-
-        // Extract certificates
-        let cert_bags = pfx
-            .cert_x509_bags(password)
-            .map_err(|e| SignError::Certificate(format!("Failed to extract certificates: {e}")))?;
-
-        if cert_bags.is_empty() {
-            return Err(SignError::Certificate(
-                "PFX contains no certificates".into(),
-            ));
-        }
-
-        // First certificate is the signing cert, rest are chain certs
-        let signer_cert_der = cert_bags[0].clone();
-        let chain_certs_der = cert_bags[1..].to_vec();
+        let (rsa_key, signer_cert_der, chain_certs_der) = load_pfx(pfx_path, password)?;
 
         // RFC 5280 §4.2.1.3: Validate the signing certificate's keyUsage extension.
         // If present, it MUST include digitalSignature (bit 0) for code signing.
@@ -125,6 +78,22 @@ impl SigningCredentials {
         // RFC 5280 §4.2.1.12: Validate the signing certificate's extendedKeyUsage.
         // If present, it MUST include id-kp-codeSigning (1.3.6.1.5.5.7.3.3).
         validate_eku_for_code_signing(&signer_cert_der)?;
+
+        Ok(SigningCredentials {
+            rsa_key,
+            signer_cert_der,
+            chain_certs_der,
+        })
+    }
+
+    /// Load signing credentials from a PFX/PKCS#12 file for detached signing.
+    ///
+    /// Only requires digitalSignature keyUsage — no codeSigning EKU requirement.
+    pub fn from_pfx_detached(pfx_path: &Path, password: &str) -> SignResult<Self> {
+        let (rsa_key, signer_cert_der, chain_certs_der) = load_pfx(pfx_path, password)?;
+
+        // For detached signing, only digitalSignature keyUsage is required
+        validate_key_usage_for_signing(&signer_cert_der)?;
 
         Ok(SigningCredentials {
             rsa_key,
@@ -157,6 +126,62 @@ impl SigningCredentials {
     }
 }
 
+/// Load PFX and extract key material (shared between from_pfx and from_pfx_detached).
+fn load_pfx(pfx_path: &Path, password: &str) -> SignResult<(RsaPrivateKey, Vec<u8>, Vec<Vec<u8>>)> {
+    let pfx_data = std::fs::read(pfx_path).map_err(|e| {
+        SignError::Certificate(format!(
+            "Failed to read PFX file {}: {}",
+            pfx_path.display(),
+            e
+        ))
+    })?;
+
+    let pfx = p12::PFX::parse(&pfx_data)
+        .map_err(|e| SignError::Certificate(format!("Failed to parse PFX: {e}")))?;
+
+    // Verify the MAC to ensure correct password
+    if !pfx.verify_mac(password) {
+        return Err(SignError::Certificate(
+            "PFX password incorrect (MAC verification failed)".into(),
+        ));
+    }
+
+    // Extract private key(s) — PKCS#8 DER format
+    let key_bags = pfx
+        .key_bags(password)
+        .map_err(|e| SignError::Certificate(format!("Failed to extract private key: {e}")))?;
+
+    if key_bags.is_empty() {
+        return Err(SignError::Certificate(
+            "PFX contains no private keys".into(),
+        ));
+    }
+
+    // Wrap key material in Zeroizing for secure cleanup
+    let key_der = Zeroizing::new(key_bags[0].clone());
+
+    // Parse as RSA private key from PKCS#8 DER
+    let rsa_key = RsaPrivateKey::from_pkcs8_der(&key_der)
+        .map_err(|e| SignError::Certificate(format!("Failed to parse RSA private key: {e}")))?;
+
+    // Extract certificates
+    let cert_bags = pfx
+        .cert_x509_bags(password)
+        .map_err(|e| SignError::Certificate(format!("Failed to extract certificates: {e}")))?;
+
+    if cert_bags.is_empty() {
+        return Err(SignError::Certificate(
+            "PFX contains no certificates".into(),
+        ));
+    }
+
+    // First certificate is the signing cert, rest are chain certs
+    let signer_cert_der = cert_bags[0].clone();
+    let chain_certs_der = cert_bags[1..].to_vec();
+
+    Ok((rsa_key, signer_cert_der, chain_certs_der))
+}
+
 /// Result of a signing operation.
 #[derive(serde::Serialize)]
 pub struct SigningResult {
@@ -169,6 +194,20 @@ pub struct SigningResult {
     pub original_hash: String,
     /// SHA-256 hash of the signed file (hex).
     pub signed_hash: String,
+}
+
+/// Result of a detached signing operation.
+#[derive(serde::Serialize)]
+pub struct DetachedSignResult {
+    /// The PKCS#7 detached signature (.p7s) data.
+    #[serde(skip)]
+    pub p7s_data: Vec<u8>,
+    /// Whether a timestamp was applied.
+    pub timestamped: bool,
+    /// SHA-256 hash of the input file (hex).
+    pub file_hash: String,
+    /// SHA-256 hash of the .p7s signature (hex).
+    pub p7s_hash: String,
 }
 
 /// Sign a file using Authenticode.
@@ -206,6 +245,290 @@ pub async fn sign_file(
         FileType::Msi | FileType::Cab => Err(SignError::UnsupportedFileType(
             "MSI/CAB signing not yet implemented".into(),
         )),
+    }
+}
+
+/// Create a detached CMS/PKCS#7 signature for any file.
+///
+/// The signature is returned as a `.p7s` blob that can be verified independently.
+/// No file type restrictions — any file can be signed with a detached signature.
+pub async fn sign_detached(
+    input_path: &Path,
+    credentials: &SigningCredentials,
+    tsa_config: Option<&TsaConfig>,
+) -> SignResult<DetachedSignResult> {
+    let data = std::fs::read(input_path)?;
+    let file_hash = hex::encode(Sha256::digest(&data));
+
+    // Compute SHA-256 of the entire file content
+    let digest = Sha256::digest(&data);
+
+    // Build detached CMS/PKCS#7 SignedData using OID_DATA content type
+    let mut builder =
+        Pkcs7Builder::new_detached(credentials.signer_cert_der.clone(), digest.to_vec());
+
+    // Add chain certificates
+    for chain_cert in &credentials.chain_certs_der {
+        builder.add_chain_cert(chain_cert.clone());
+    }
+
+    let mut timestamped = false;
+
+    if let Some(tsa) = tsa_config {
+        // First pass: build to extract the raw signature bytes for timestamping
+        let sig_bytes = {
+            let temp_pkcs7 =
+                builder.build(|signed_attrs_der| credentials.sign_data(signed_attrs_der))?;
+            extract_signature_from_pkcs7(&temp_pkcs7)?
+        };
+
+        match crate::timestamp::request_timestamp(&sig_bytes, tsa).await {
+            Ok(token) => {
+                builder.set_timestamp_token(token);
+                timestamped = true;
+            }
+            Err(e) => {
+                eprintln!(
+                    "Warning: timestamping failed (signing will proceed without timestamp): {e}"
+                );
+            }
+        }
+    }
+
+    // Build the final PKCS#7 detached signature
+    let pkcs7_der = builder.build(|signed_attrs_der| credentials.sign_data(signed_attrs_der))?;
+    let p7s_hash = hex::encode(Sha256::digest(&pkcs7_der));
+
+    Ok(DetachedSignResult {
+        p7s_data: pkcs7_der,
+        timestamped,
+        file_hash,
+        p7s_hash,
+    })
+}
+
+/// Parsed certificate information for the admin API.
+#[derive(Debug, serde::Serialize)]
+pub struct CertificateInfo {
+    pub subject: String,
+    pub issuer: String,
+    pub serial_number: String,
+    pub not_before: String,
+    pub not_after: String,
+    pub fingerprint_sha256: String,
+    pub key_usage: Vec<String>,
+    pub extended_key_usage: Vec<String>,
+    pub chain_length: usize,
+}
+
+/// Parse X.509 certificate DER to extract displayable information.
+pub fn parse_certificate_info(cert_der: &[u8]) -> CertificateInfo {
+    use crate::pkcs7::asn1;
+
+    let fingerprint = hex::encode(Sha256::digest(cert_der));
+
+    // Try to parse the TBSCertificate fields
+    let mut subject = String::from("(unknown)");
+    let mut issuer = String::from("(unknown)");
+    let mut serial_number = String::from("(unknown)");
+    let mut not_before = String::from("(unknown)");
+    let mut not_after = String::from("(unknown)");
+    let mut key_usage = Vec::new();
+    let mut extended_key_usage = Vec::new();
+
+    if let Ok((_tag, cert_content)) = asn1::parse_tlv(cert_der) {
+        // TBSCertificate SEQUENCE
+        if let Ok((_tag, tbs_content)) = asn1::parse_tlv(cert_content) {
+            let mut pos = tbs_content;
+
+            // version [0] EXPLICIT
+            if !pos.is_empty() && pos[0] == 0xA0 {
+                if let Ok((_tag, remaining)) = asn1::skip_tlv(pos) {
+                    pos = remaining;
+                }
+            }
+
+            // serialNumber INTEGER
+            if let Ok((_tag, serial_content)) = asn1::parse_tlv(pos) {
+                serial_number = hex::encode(serial_content);
+                if let Ok((_tag, remaining)) = asn1::skip_tlv(pos) {
+                    pos = remaining;
+                }
+            }
+
+            // signature AlgorithmIdentifier — skip
+            if let Ok((_tag, remaining)) = asn1::skip_tlv(pos) {
+                pos = remaining;
+            }
+
+            // issuer Name
+            if let Ok((_tag, issuer_content)) = asn1::parse_tlv(pos) {
+                issuer = extract_dn_string(issuer_content);
+                if let Ok((_tag, remaining)) = asn1::skip_tlv(pos) {
+                    pos = remaining;
+                }
+            }
+
+            // validity SEQUENCE
+            if let Ok((_tag, validity_content)) = asn1::parse_tlv(pos) {
+                if let Ok((_tag, nb_content)) = asn1::parse_tlv(validity_content) {
+                    not_before = String::from_utf8_lossy(nb_content).to_string();
+                    if let Ok((_tag, rest)) = asn1::skip_tlv(validity_content) {
+                        if let Ok((_tag, na_content)) = asn1::parse_tlv(rest) {
+                            not_after = String::from_utf8_lossy(na_content).to_string();
+                        }
+                    }
+                }
+                if let Ok((_tag, remaining)) = asn1::skip_tlv(pos) {
+                    pos = remaining;
+                }
+            }
+
+            // subject Name
+            if let Ok((_tag, subject_content)) = asn1::parse_tlv(pos) {
+                subject = extract_dn_string(subject_content);
+            }
+        }
+    }
+
+    // Parse keyUsage extension
+    let ku_oid: &[u8] = &[0x06, 0x03, 0x55, 0x1D, 0x0F];
+    if let Some(ku_pos) = cert_der.windows(ku_oid.len()).position(|w| w == ku_oid) {
+        let after = &cert_der[ku_pos + ku_oid.len()..];
+        for i in 0..after.len().min(20) {
+            if after[i] == 0x03 && i + 3 < after.len() {
+                if let Ok((_, bit_content)) = asn1::parse_tlv(&after[i..]) {
+                    if bit_content.len() >= 2 {
+                        let bits = bit_content[1];
+                        if bits & 0x80 != 0 {
+                            key_usage.push("digitalSignature".into());
+                        }
+                        if bits & 0x40 != 0 {
+                            key_usage.push("contentCommitment".into());
+                        }
+                        if bits & 0x20 != 0 {
+                            key_usage.push("keyEncipherment".into());
+                        }
+                        if bits & 0x10 != 0 {
+                            key_usage.push("dataEncipherment".into());
+                        }
+                        if bits & 0x08 != 0 {
+                            key_usage.push("keyAgreement".into());
+                        }
+                        if bits & 0x04 != 0 {
+                            key_usage.push("keyCertSign".into());
+                        }
+                        if bits & 0x02 != 0 {
+                            key_usage.push("cRLSign".into());
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    // Parse EKU extension
+    let eku_oid: &[u8] = &[0x06, 0x03, 0x55, 0x1D, 0x25];
+    if let Some(eku_pos) = cert_der.windows(eku_oid.len()).position(|w| w == eku_oid) {
+        let search = &cert_der[eku_pos..cert_der.len().min(eku_pos + 200)];
+        let code_signing: &[u8] = &[0x2B, 0x06, 0x01, 0x05, 0x05, 0x07, 0x03, 0x03];
+        let server_auth: &[u8] = &[0x2B, 0x06, 0x01, 0x05, 0x05, 0x07, 0x03, 0x01];
+        let email_prot: &[u8] = &[0x2B, 0x06, 0x01, 0x05, 0x05, 0x07, 0x03, 0x04];
+        let ts: &[u8] = &[0x2B, 0x06, 0x01, 0x05, 0x05, 0x07, 0x03, 0x08];
+
+        if search
+            .windows(code_signing.len())
+            .any(|w| w == code_signing)
+        {
+            extended_key_usage.push("codeSigning".into());
+        }
+        if search.windows(server_auth.len()).any(|w| w == server_auth) {
+            extended_key_usage.push("serverAuth".into());
+        }
+        if search.windows(email_prot.len()).any(|w| w == email_prot) {
+            extended_key_usage.push("emailProtection".into());
+        }
+        if search.windows(ts.len()).any(|w| w == ts) {
+            extended_key_usage.push("timeStamping".into());
+        }
+    }
+
+    CertificateInfo {
+        subject,
+        issuer,
+        serial_number,
+        not_before,
+        not_after,
+        fingerprint_sha256: fingerprint,
+        key_usage,
+        extended_key_usage,
+        chain_length: 0, // Caller should set this from chain_certs_der.len()
+    }
+}
+
+/// Extract a human-readable DN string from DER-encoded Name (SEQUENCE of SET of SEQUENCE).
+fn extract_dn_string(name_der: &[u8]) -> String {
+    use crate::pkcs7::asn1;
+
+    let mut parts = Vec::new();
+    let mut pos = name_der;
+
+    while !pos.is_empty() {
+        // Each RDN is a SET — extract its content and advance past it
+        let (set_tag, set_content) = match asn1::parse_tlv(pos) {
+            Ok(v) => v,
+            Err(_) => break,
+        };
+        let (_, remaining) = match asn1::skip_tlv(pos) {
+            Ok(v) => v,
+            Err(_) => break,
+        };
+        pos = remaining;
+        let _ = set_tag;
+
+        // Each SET contains one or more SEQUENCE (AttributeTypeAndValue)
+        let mut set_pos = set_content;
+        while !set_pos.is_empty() {
+            let (_, seq_content) = match asn1::parse_tlv(set_pos) {
+                Ok(v) => v,
+                Err(_) => break,
+            };
+            let (_, seq_remaining) = match asn1::skip_tlv(set_pos) {
+                Ok(v) => v,
+                Err(_) => break,
+            };
+            set_pos = seq_remaining;
+
+            // SEQUENCE: OID + value
+            // parse_tlv on the OID returns (tag=0x06, oid_bytes)
+            if let Ok((_oid_tag, oid_content)) = asn1::parse_tlv(seq_content) {
+                // Get remainder after OID TLV
+                let value_remaining = match asn1::skip_tlv(seq_content) {
+                    Ok((_, rem)) => rem,
+                    Err(_) => continue,
+                };
+                let attr_name = match oid_content {
+                    [0x55, 0x04, 0x03] => "CN",
+                    [0x55, 0x04, 0x06] => "C",
+                    [0x55, 0x04, 0x07] => "L",
+                    [0x55, 0x04, 0x08] => "ST",
+                    [0x55, 0x04, 0x0A] => "O",
+                    [0x55, 0x04, 0x0B] => "OU",
+                    _ => "?",
+                };
+                if let Ok((_val_tag, value_content)) = asn1::parse_tlv(value_remaining) {
+                    let value = String::from_utf8_lossy(value_content);
+                    parts.push(format!("{attr_name}={value}"));
+                }
+            }
+        }
+    }
+
+    if parts.is_empty() {
+        "(unknown)".into()
+    } else {
+        parts.join(", ")
     }
 }
 
@@ -544,7 +867,6 @@ mod tests {
     #[test]
     fn test_key_usage_no_extension_permits_signing() {
         // A minimal cert without any extensions — should be allowed
-        use crate::pkcs7::asn1;
         let cert = build_minimal_test_cert(None);
         assert!(validate_key_usage_for_signing(&cert).is_ok());
     }
@@ -552,7 +874,6 @@ mod tests {
     #[test]
     fn test_key_usage_digital_signature_set() {
         // Cert with keyUsage = digitalSignature (bit 0 = 0x80) — should be allowed
-        use crate::pkcs7::asn1;
         let ku_ext = build_key_usage_extension(0x80, true); // digitalSignature
         let cert = build_minimal_test_cert(Some(&ku_ext));
         assert!(validate_key_usage_for_signing(&cert).is_ok());
@@ -561,7 +882,6 @@ mod tests {
     #[test]
     fn test_key_usage_key_cert_sign_only_rejected() {
         // Cert with keyUsage = keyCertSign only (bit 5 = 0x04) — should be rejected
-        use crate::pkcs7::asn1;
         let ku_ext = build_key_usage_extension(0x04, true); // keyCertSign only
         let cert = build_minimal_test_cert(Some(&ku_ext));
         let result = validate_key_usage_for_signing(&cert);
@@ -577,7 +897,6 @@ mod tests {
     #[test]
     fn test_key_usage_both_digital_sig_and_cert_sign() {
         // Cert with keyUsage = digitalSignature + keyCertSign (0x84) — should be allowed
-        use crate::pkcs7::asn1;
         let ku_ext = build_key_usage_extension(0x84, true);
         let cert = build_minimal_test_cert(Some(&ku_ext));
         assert!(validate_key_usage_for_signing(&cert).is_ok());

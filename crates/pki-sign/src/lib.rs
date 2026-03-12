@@ -1,19 +1,23 @@
-//! # spork-sign — Pure Rust Authenticode Code Signing Service
+//! # pki-sign — Pure Rust Code Signing Engine
 //!
 //! A standalone code signing service that signs Windows PE executables,
 //! DLLs, drivers, MSI installers, and PowerShell scripts using
-//! Microsoft Authenticode. No external tools required — all signing
+//! Microsoft Authenticode. Supports detached CMS/PKCS#7 signing for
+//! arbitrary files. No external tools required — all signing
 //! logic is implemented in pure Rust.
 //!
 //! ## Features
 //!
 //! - **PE Authenticode signing** — EXE, DLL, SYS, OCX, SCR, CPL, DRV
+//! - **Detached CMS signing** — Sign any file with a `.p7s` detached signature
 //! - **PowerShell signing** — PS1 scripts with Base64 PKCS#7 blocks
 //! - **MSI/CAB signing** — Windows Installer packages
 //! - **RFC 3161 timestamping** — Counter-signatures for long-term validity
-//! - **Signature verification** — Validate existing Authenticode signatures
+//! - **Signature verification** — Validate existing Authenticode and detached signatures
 //! - **PFX/PKCS#12 support** — Load signing credentials from .pfx files
 //! - **Web service mode** — axum HTTP server for Code Signing as a Service
+//! - **LDAP authentication** — Header-based auth via reverse proxy
+//! - **Certificate management** — Admin API for cert listing and management
 //! - **CLI mode** — Command-line signing without a server
 //!
 //! ## Architecture

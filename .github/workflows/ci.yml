@@ -69,12 +69,12 @@ jobs:
       - run: cargo build --release
       - name: Verify binary built
         run: |
-          if [ ! -f "target/release/spork-sign" ]; then
-            echo "ERROR: spork-sign binary not found"
+          if [ ! -f "target/release/pki-sign" ]; then
+            echo "ERROR: pki-sign binary not found"
             exit 1
           fi
-          VERSION=$(./target/release/spork-sign --version 2>&1 || true)
-          echo "OK: $VERSION ($(du -h target/release/spork-sign | cut -f1))"
+          VERSION=$(./target/release/pki-sign --version 2>&1 || true)
+          echo "OK: $VERSION ($(du -h target/release/pki-sign | cut -f1))"
 
   build-musl:
     name: Build (musl static)
@@ -103,10 +103,10 @@ jobs:
         run: cargo build --release --target x86_64-unknown-linux-musl
       - name: Verify static linking
         run: |
-          if ldd "target/x86_64-unknown-linux-musl/release/spork-sign" 2>&1 | grep -q "not a dynamic"; then
-            echo "OK: spork-sign is statically linked"
+          if ldd "target/x86_64-unknown-linux-musl/release/pki-sign" 2>&1 | grep -q "not a dynamic"; then
+            echo "OK: pki-sign is statically linked"
           else
-            echo "WARN: spork-sign may not be fully static"
+            echo "WARN: pki-sign may not be fully static"
           fi
 
   audit:

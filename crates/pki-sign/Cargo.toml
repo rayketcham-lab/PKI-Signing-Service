@@ -1,9 +1,9 @@
 [package]
-name = "spork-sign"
+name = "pki-sign"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "SPORK Sign - Pure Rust Authenticode Code Signing Service"
+description = "PKI Signing Service - Pure Rust Code Signing Engine"
 repository.workspace = true
 
 [dependencies]
@@ -92,7 +92,7 @@ predicates = { workspace = true }
 tower = { version = "0.5", features = ["util"] }
 
 [[bin]]
-name = "spork-sign"
+name = "pki-sign"
 path = "src/main.rs"
 
 [lib]

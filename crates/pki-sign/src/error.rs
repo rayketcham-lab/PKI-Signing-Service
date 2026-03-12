@@ -1,8 +1,8 @@
-//! Error types for the spork-sign crate.
+//! Error types for the pki-sign crate.
 
 use thiserror::Error;
 
-/// Result type alias for spork-sign operations.
+/// Result type alias for pki-sign operations.
 pub type SignResult<T> = Result<T, SignError>;
 
 /// Errors that can occur during code signing operations.

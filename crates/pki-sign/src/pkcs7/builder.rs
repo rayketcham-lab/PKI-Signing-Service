@@ -508,7 +508,7 @@ pub struct Pkcs7Builder {
     signer_cert_der: Vec<u8>,
     /// DER-encoded additional certificates (chain).
     chain_certs_der: Vec<Vec<u8>>,
-    /// The Authenticode PE image hash (SHA-256).
+    /// The Authenticode PE image hash (SHA-256), or file content digest for detached.
     image_hash: Vec<u8>,
     /// DER-encoded timestamp token (optional).
     timestamp_token: Option<Vec<u8>>,
@@ -518,6 +518,8 @@ pub struct Pkcs7Builder {
     program_name: Option<String>,
     /// Optional SpcSpOpusInfo more info URL (Authenticode program URL).
     program_url: Option<String>,
+    /// Whether this is a detached signature (no encapsulated content).
+    detached: bool,
 }
 
 impl Pkcs7Builder {
@@ -534,6 +536,26 @@ impl Pkcs7Builder {
             signing_algorithm: SigningAlgorithm::RsaSha256,
             program_name: None,
             program_url: None,
+            detached: false,
+        }
+    }
+
+    /// Create a new PKCS#7 builder for detached CMS signatures.
+    ///
+    /// In detached mode, the signed content is not included in the PKCS#7
+    /// structure. The `content_digest` is the SHA-256 hash of the original
+    /// file content. The contentType attribute uses `id-data` (OID 1.2.840.113549.1.7.1)
+    /// instead of `SPC_INDIRECT_DATA`.
+    pub fn new_detached(signer_cert_der: Vec<u8>, content_digest: Vec<u8>) -> Self {
+        Self {
+            signer_cert_der,
+            chain_certs_der: Vec::new(),
+            image_hash: content_digest,
+            timestamp_token: None,
+            signing_algorithm: SigningAlgorithm::RsaSha256,
+            program_name: None,
+            program_url: None,
+            detached: true,
         }
     }
 
@@ -569,8 +591,9 @@ impl Pkcs7Builder {
 
     /// Build the DER-encoded ContentInfo wrapping SignedData.
     ///
-    /// This produces the complete PKCS#7 blob ready for embedding
-    /// in a WIN_CERTIFICATE structure.
+    /// For Authenticode mode, produces a PKCS#7 blob ready for embedding
+    /// in a WIN_CERTIFICATE structure. For detached mode, produces a
+    /// standard CMS detached signature (`.p7s`).
     ///
     /// The `sign_fn` callback receives the DER-encoded signed attributes
     /// (as a SET, tag 0x31) and must return the raw signature bytes
@@ -582,27 +605,28 @@ impl Pkcs7Builder {
         // Step 1: Extract issuer and serial from signer certificate
         let (issuer_der, serial_der) = extract_issuer_and_serial(&self.signer_cert_der)?;
 
-        // Step 2: Build SPC_INDIRECT_DATA_CONTENT
-        let spc_indirect = build_spc_indirect_data(&self.image_hash);
+        // Step 2: Build signed attributes
+        let attrs_content = if self.detached {
+            // Detached mode: contentType = id-data, no SPC structures
+            build_detached_signed_attrs_content(&self.image_hash, self.signing_algorithm)
+        } else {
+            // Authenticode mode: contentType = SPC_INDIRECT_DATA
+            build_signed_attrs_content(
+                &self.image_hash,
+                self.signing_algorithm,
+                self.program_name.as_deref(),
+                self.program_url.as_deref(),
+            )
+        };
 
-        // Step 3: Build signed attributes (contentType, messageDigest, signingTime,
-        //         CMSAlgorithmProtection per RFC 8933, optional SpcSpOpusInfo)
-        // The signed attrs content is the raw concatenation of Attribute SEQUENCEs
-        let attrs_content = build_signed_attrs_content(
-            &self.image_hash,
-            self.signing_algorithm,
-            self.program_name.as_deref(),
-            self.program_url.as_deref(),
-        );
-
-        // Step 4: DER-encode as SET for signing (tag 0x31)
+        // Step 3: DER-encode as SET for signing (tag 0x31)
         let attrs_as_set = asn1::encode_set(&attrs_content);
 
-        // Step 5: Sign the DER-encoded SET
+        // Step 4: Sign the DER-encoded SET
         // Per RFC 5652 Section 5.4: sign the DER encoding of the signed attributes
         let signature_bytes = sign_fn(&attrs_as_set)?;
 
-        // Step 6: Build SignerInfo
+        // Step 5: Build SignerInfo
         let signer_info = build_signer_info(
             &issuer_der,
             &serial_der,
@@ -611,7 +635,7 @@ impl Pkcs7Builder {
             self.timestamp_token.as_deref(),
         );
 
-        // Step 7: Build certificates [0] IMPLICIT
+        // Step 6: Build certificates [0] IMPLICIT
         // Certificates are raw DER — do NOT double-wrap in SEQUENCE (Python bug #3)
         let mut certs_data = Vec::new();
         certs_data.extend_from_slice(&self.signer_cert_der);
@@ -620,10 +644,15 @@ impl Pkcs7Builder {
         }
         let certificates = asn1::encode_implicit_tag(0, &certs_data);
 
-        // Step 8: Build SignedData
-        let signed_data = build_signed_data(&spc_indirect, &certificates, &signer_info);
+        // Step 7: Build SignedData
+        let signed_data = if self.detached {
+            build_detached_signed_data(&certificates, &signer_info)
+        } else {
+            let spc_indirect = build_spc_indirect_data(&self.image_hash);
+            build_signed_data(&spc_indirect, &certificates, &signer_info)
+        };
 
-        // Step 9: Wrap in ContentInfo
+        // Step 8: Wrap in ContentInfo
         let content_info = build_content_info(&signed_data);
 
         Ok(content_info)
@@ -888,6 +917,47 @@ fn build_signed_attrs_content(
         let opus_attr = build_spc_sp_opus_info_attr(program_name, program_url);
         content.extend_from_slice(&opus_attr);
     }
+
+    content
+}
+
+/// Build the raw content of signed attributes for detached CMS signatures.
+///
+/// Uses `id-data` (OID 1.2.840.113549.1.7.1) as the contentType instead of
+/// `SPC_INDIRECT_DATA`, since detached signatures are not Authenticode-specific.
+///
+/// Four attributes:
+/// 1. contentType = id-data
+/// 2. messageDigest = SHA-256 hash of the file content
+/// 3. signingTime = current UTC time
+/// 4. CMSAlgorithmProtection (RFC 8933)
+fn build_detached_signed_attrs_content(
+    content_digest: &[u8],
+    signing_alg: SigningAlgorithm,
+) -> Vec<u8> {
+    // Attribute 1: contentType = id-data
+    let content_type_attr =
+        asn1::encode_sequence(&[asn1::OID_CONTENT_TYPE, &asn1::encode_set(asn1::OID_DATA)]);
+
+    // Attribute 2: messageDigest
+    let message_digest_attr = asn1::encode_sequence(&[
+        asn1::OID_MESSAGE_DIGEST,
+        &asn1::encode_set(&asn1::encode_octet_string(content_digest)),
+    ]);
+
+    // Attribute 3: signingTime
+    let utc_time = asn1::encode_utc_time_now();
+    let signing_time_attr =
+        asn1::encode_sequence(&[asn1::OID_SIGNING_TIME, &asn1::encode_set(&utc_time)]);
+
+    // Attribute 4: CMSAlgorithmProtection (RFC 8933)
+    let cms_alg_protection_attr = build_cms_algorithm_protection_attr(signing_alg);
+
+    let mut content = Vec::new();
+    content.extend_from_slice(&content_type_attr);
+    content.extend_from_slice(&message_digest_attr);
+    content.extend_from_slice(&signing_time_attr);
+    content.extend_from_slice(&cms_alg_protection_attr);
 
     content
 }
@@ -1231,6 +1301,33 @@ fn build_signed_data(spc_indirect: &[u8], certificates: &[u8], signer_info: &[u8
         asn1::OID_SPC_INDIRECT_DATA,
         &asn1::encode_explicit_tag(0, spc_indirect),
     ]);
+
+    // signerInfos SET { signerInfo }
+    let signer_infos = asn1::encode_set(signer_info);
+
+    asn1::encode_sequence(&[
+        &version,
+        &digest_algorithms,
+        &content_info,
+        certificates,
+        &signer_infos,
+    ])
+}
+
+/// Build a SignedData for detached CMS signatures (RFC 5652 §5.2).
+///
+/// In detached mode, the EncapsulatedContentInfo contains only the content
+/// type OID (`id-data`) with no encapsulated content. The actual file content
+/// is transmitted separately.
+fn build_detached_signed_data(certificates: &[u8], signer_info: &[u8]) -> Vec<u8> {
+    // RFC 5652 §5.1: version is 1 when eContentType is id-data
+    let version = asn1::encode_integer_value(1);
+
+    // digestAlgorithms SET { AlgorithmIdentifier(SHA-256) }
+    let digest_algorithms = asn1::encode_set(&asn1::SHA256_ALGORITHM_ID);
+
+    // EncapsulatedContentInfo — SEQUENCE { OID id-data } (no [0] content)
+    let content_info = asn1::encode_sequence(&[asn1::OID_DATA]);
 
     // signerInfos SET { signerInfo }
     let signer_infos = asn1::encode_set(signer_info);

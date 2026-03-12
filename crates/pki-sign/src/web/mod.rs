@@ -6,19 +6,27 @@
 //! ## Public API Routes
 //!
 //! - `POST /api/v1/sign` — Upload and sign file (multipart)
+//! - `POST /api/v1/sign-detached` — Create detached CMS signature
 //! - `POST /api/v1/verify` — Upload and verify file signature
+//! - `POST /api/v1/verify-detached` — Verify a detached signature
 //! - `GET /api/v1/status` — Server status and statistics
 //! - `GET /api/v1/health` — Health check
 //! - `GET /api/v1/certificate` — Public signing certificate info
+//! - `POST /api/v1/report-issue` — Report an issue (creates GitHub issue)
 //!
-//! ## Admin Routes (Bearer token auth)
+//! ## Admin Routes (Bearer token or LDAP admin group)
 //!
 //! - `GET /admin/stats` — Detailed statistics
 //! - `GET /admin/audit` — Recent audit log entries
 //! - `POST /admin/reload` — Reload PFX credentials
+//! - `GET /admin/certs` — List all certificates
+//! - `GET /admin/certs/:name` — Detailed certificate info
+//! - `POST /admin/certs/:name/default` — Set default certificate
 
 pub mod audit;
+pub mod gh_issues;
 mod handlers;
+pub mod ldap;
 mod middleware;
 
 pub use audit::AuditLogger;
@@ -45,13 +53,15 @@ pub struct AppState {
     /// Loaded signing credentials (supports hot-reload via RwLock).
     pub credentials: RwLock<Vec<(String, SigningCredentials)>>,
     /// Default credential index.
-    pub default_credential: usize,
+    pub default_credential: RwLock<usize>,
     /// Audit log writer.
     pub audit: AuditLogger,
     /// Server start time (for uptime calculation).
     pub started_at: Instant,
     /// Atomic signing statistics.
     pub stats: SigningStats,
+    /// GitHub issue reporter for auto-error reporting.
+    pub gh_reporter: Option<gh_issues::GitHubIssueReporter>,
 }
 
 /// Atomic counters for signing statistics.
@@ -77,26 +87,44 @@ impl Default for SigningStats {
 
 /// Build the axum router with all routes.
 pub fn build_router(state: Arc<AppState>) -> Router {
-    // Admin routes — protected by bearer token auth
+    // Admin routes — protected by bearer token auth or LDAP admin group
     let admin_router = Router::new()
         .route("/admin/stats", get(handlers::admin_stats))
         .route("/admin/audit", get(handlers::admin_audit))
         .route("/admin/reload", post(handlers::admin_reload))
+        .route("/admin/certs", get(handlers::admin_list_certs))
+        .route("/admin/certs/:name", get(handlers::admin_cert_info))
+        .route(
+            "/admin/certs/:name/default",
+            post(handlers::admin_set_default_cert),
+        )
         .route_layer(axum_middleware::from_fn_with_state(
             state.clone(),
             middleware::admin_auth_middleware,
+        ));
+
+    // LDAP middleware on all routes except health
+    let api_router = Router::new()
+        .route("/api/v1/sign", post(handlers::sign_file))
+        .route("/api/v1/sign-detached", post(handlers::sign_detached))
+        .route("/api/v1/verify", post(handlers::verify_file))
+        .route("/api/v1/verify-detached", post(handlers::verify_detached))
+        .route("/api/v1/status", get(handlers::server_status))
+        .route("/api/v1/certificate", get(handlers::certificate_info))
+        .route("/api/v1/report-issue", post(handlers::report_issue))
+        .route_layer(axum_middleware::from_fn_with_state(
+            state.clone(),
+            middleware::ldap_auth_middleware,
         ));
 
     // Assemble the full router
     let max_body = state.config.max_upload_size as usize;
 
     Router::new()
-        // Public API routes
-        .route("/api/v1/sign", post(handlers::sign_file))
-        .route("/api/v1/verify", post(handlers::verify_file))
-        .route("/api/v1/status", get(handlers::server_status))
+        // Health check is unauthenticated
         .route("/api/v1/health", get(handlers::health_check))
-        .route("/api/v1/certificate", get(handlers::certificate_info))
+        // Authenticated API routes
+        .merge(api_router)
         // Admin routes
         .merge(admin_router)
         // Catch-all
@@ -155,20 +183,36 @@ pub async fn run_server(config: SignConfig) -> Result<(), Box<dyn std::error::Er
     })?;
     info!(path = %config.audit_log.display(), "Audit logger initialized");
 
-    // 5. Build shared state
+    // 5. Initialize GitHub issue reporter
+    let gh_reporter = if config.github.enabled {
+        info!(repo = %config.github.repo, "GitHub issue reporter enabled");
+        Some(gh_issues::GitHubIssueReporter::new(
+            config.github.repo.clone(),
+            config.github.dedup_window_secs,
+        ))
+    } else {
+        None
+    };
+
+    if config.dev_mode {
+        tracing::warn!("Development mode ENABLED — LDAP bypassed, admin routes open");
+    }
+
+    // 6. Build shared state
     let state = Arc::new(AppState {
         config,
         credentials: RwLock::new(credentials),
-        default_credential: 0,
+        default_credential: RwLock::new(0),
         audit,
         started_at: Instant::now(),
         stats: SigningStats::default(),
+        gh_reporter,
     });
 
-    // 6. Build router
+    // 7. Build router
     let router = build_router(state);
 
-    // 7. Bind and serve
+    // 8. Bind and serve
     let socket_addr: std::net::SocketAddr = bind_addr
         .parse()
         .map_err(|e| SignError::Config(format!("Invalid bind address '{}': {}", bind_addr, e)))?;

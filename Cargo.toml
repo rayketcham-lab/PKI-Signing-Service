@@ -1,12 +1,12 @@
 [workspace]
 resolver = "2"
-members = ["crates/spork-sign"]
+members = ["crates/pki-sign"]
 
 [workspace.package]
 version = "0.3.0-beta.2"
 edition = "2021"
-license = "LicenseRef-BSL-1.1"
-repository = "https://github.com/rayketcham-lab/spork-sign"
+license = "MIT"
+repository = "https://github.com/rayketcham-lab/PKI-Signing-Service"
 
 [workspace.dependencies]
 # Shared utilities

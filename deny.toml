@@ -14,7 +14,7 @@ ignore = [
     { id = "RUSTSEC-2025-0119", reason = "number_prefix: unmaintained, display-only functionality" },
     { id = "RUSTSEC-2025-0134", reason = "rustls-pemfile: unmaintained, migrating to rustls-pem" },
     # RSA timing sidechannel - mitigated by not using RSA decryption in production signing paths
-    { id = "RUSTSEC-2023-0071", reason = "rsa Marvin attack: spork-sign only uses RSA signing, not decryption in critical paths" },
+    { id = "RUSTSEC-2023-0071", reason = "rsa Marvin attack: pki-sign only uses RSA signing, not decryption in critical paths" },
 ]
 
 # ============================================================================
@@ -40,7 +40,6 @@ allow = [
     "Unicode-3.0",
     "OpenSSL",
     "0BSD",  # BSD Zero Clause License (very permissive)
-    "LicenseRef-BSL-1.1",  # SPORK crates: Business Source License 1.1
     "CDLA-Permissive-2.0",  # webpki-roots: Community Data License Agreement
 ]
 
@@ -69,14 +68,14 @@ highlight = "all"
 
 # List of crates to deny entirely
 deny = [
-    # OpenSSL is fully banned — SPORK uses rustls for all TLS
+    # OpenSSL is fully banned — PKI Signing Service uses rustls for all TLS
     { name = "openssl" },
     { name = "openssl-sys" },
     { name = "native-tls" },
 
     # Legacy hash algorithms - allowed through specific compatibility wrappers
     # sha1: x509-cert parsing, PKCS#12/PFX, OAEP legacy
-    { name = "sha1", wrappers = ["spork-sign", "axum", "x509-cert", "p12", "p12-keystore"] },
+    { name = "sha1", wrappers = ["pki-sign", "axum", "x509-cert", "p12", "p12-keystore"] },
 
     # Deprecated/insecure crates (no legitimate use)
     { name = "rust-crypto" },

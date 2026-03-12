@@ -108,6 +108,52 @@ pub fn verify_file_with_trust_store(
     }
 }
 
+/// Verify a detached CMS/PKCS#7 signature against file content.
+///
+/// Parses the `.p7s` signature, recomputes the file digest, and compares
+/// it to the signed `messageDigest` attribute. Returns a `VerifyResult`
+/// with `eku_valid` always `true` (no codeSigning EKU requirement for
+/// detached signatures).
+pub fn verify_detached(file_data: &[u8], p7s_data: &[u8]) -> SignResult<VerifyResult> {
+    let cms_info = parse_cms_signed_data(p7s_data)?;
+
+    // Recompute file digest using the algorithm from the CMS SignedData
+    let computed_hash = match cms_info.digest_algorithm.as_str() {
+        "SHA-384" => Sha384::digest(file_data).to_vec(),
+        "SHA-512" => Sha512::digest(file_data).to_vec(),
+        _ => Sha256::digest(file_data).to_vec(),
+    };
+
+    let computed_hex = hex::encode(&computed_hash);
+    let signed_hex = hex::encode(&cms_info.message_digest);
+    let signature_valid = computed_hash == cms_info.message_digest;
+
+    let mut warnings = cms_info.warnings;
+    validate_chain_certificates(
+        &cms_info.signer_cert_der,
+        &cms_info.chain_certs_der,
+        &mut warnings,
+    );
+
+    Ok(VerifyResult {
+        signature_valid,
+        chain_valid: true,
+        eku_valid: true,
+        timestamped: cms_info.has_timestamp,
+        signer_subject: cms_info.signer_subject,
+        signer_issuer: cms_info.signer_issuer,
+        algorithm: cms_info.signature_algorithm,
+        timestamp_time: cms_info.timestamp_time,
+        digest_algorithm: cms_info.digest_algorithm,
+        content_type: cms_info.encap_content_type,
+        computed_digest: computed_hex,
+        signed_digest: signed_hex,
+        warnings,
+        counter_signers: cms_info.counter_signers,
+        content_hints: cms_info.content_hints,
+    })
+}
+
 /// Verify a PE file's Authenticode signature.
 fn verify_pe(data: &[u8], trusted_roots: &[Vec<u8>]) -> SignResult<VerifyResult> {
     let pe_info = pe::PeInfo::parse(data)?;
