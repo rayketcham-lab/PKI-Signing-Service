@@ -74,7 +74,13 @@ jobs:
       - name: Verify Content-Disposition sanitization
         if: matrix.os == 'Linux'
         run: |
-          grep -n 'CONTENT_DISPOSITION' crates/pki-sign/src/web/handlers.rs -A5 | grep -v sanitize_filename | grep -q 'filename.*{}' && exit 1 || echo "OK"
+          CD_COUNT=$(grep -c 'CONTENT_DISPOSITION' crates/pki-sign/src/web/handlers.rs)
+          SAN_COUNT=$(grep -c 'sanitize_filename' crates/pki-sign/src/web/handlers.rs)
+          if [ "$SAN_COUNT" -lt "$CD_COUNT" ]; then
+            echo "FAIL: $CD_COUNT Content-Disposition headers but only $SAN_COUNT sanitize_filename calls"
+            exit 1
+          fi
+          echo "OK: $CD_COUNT Content-Disposition headers, $SAN_COUNT sanitize_filename calls"
       - name: Verify audit log errors are handled
         if: matrix.os == 'Linux'
         run: |
