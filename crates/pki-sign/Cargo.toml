@@ -3,7 +3,7 @@ name = "pki-sign"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "PKI Signing Service - Pure Rust Code Signing Engine"
+description = "Code Signing Service - Pure Rust Code Signing Engine"
 repository.workspace = true
 
 [dependencies]
@@ -40,6 +40,9 @@ colored = "2"
 # PE/COFF parsing
 goblin = { version = "0.9", default-features = false, features = ["pe32", "pe64", "std"] }
 
+# OLE Compound Document (CFB) parsing for MSI signing
+cfb = "0.9"
+
 # Crypto - signing
 sha1 = "0.10"
 sha2 = { version = "0.10", features = ["oid"] }
@@ -48,6 +51,7 @@ rsa = "0.9"
 p256 = { version = "0.13", features = ["ecdsa", "pem", "ecdh"] }
 p384 = { version = "0.13", features = ["ecdsa", "pem", "ecdh"] }
 ed25519-dalek = { version = "2", features = ["pkcs8"] }
+ml-dsa = { version = "0.0.4", features = ["pkcs8"] }
 signature = "2"
 pkcs8 = { version = "0.10", features = ["pem"] }
 hkdf = "0.12"
@@ -67,6 +71,7 @@ aes-kw = "0.2"
 
 # PKCS#12/PFX loading
 p12 = "0.6"
+p12-keystore = { workspace = true }
 zeroize = { workspace = true }
 
 # HTTP client (for TSA requests)
@@ -82,6 +87,12 @@ axum-extra = { version = "0.9", features = ["multipart"] }
 # Temp files
 tempfile = "3"
 
+# ZIP archive for batch signing
+zip = { workspace = true }
+
+# CSV output for signing summaries
+csv = { workspace = true }
+
 [features]
 default = []
 
@@ -90,6 +101,7 @@ tempfile = { workspace = true }
 assert_cmd = { workspace = true }
 predicates = { workspace = true }
 tower = { version = "0.5", features = ["util"] }
+http-body-util = "0.1"
 
 [[bin]]
 name = "pki-sign"

@@ -150,6 +150,14 @@ pub struct LdapConfig {
     /// Delimiter for multiple groups in the groups header.
     #[serde(default = "default_groups_delimiter")]
     pub groups_delimiter: String,
+    /// Trusted reverse proxy IP addresses/CIDRs.
+    ///
+    /// When non-empty, LDAP header authentication is only accepted from
+    /// requests originating from these addresses. Requests from other IPs
+    /// will have LDAP auth headers stripped/ignored (returns 404).
+    /// Supports IPv4 and IPv6 addresses (CIDR notation not yet supported).
+    #[serde(default)]
+    pub trusted_proxies: Vec<String>,
 }
 
 impl Default for LdapConfig {
@@ -163,6 +171,7 @@ impl Default for LdapConfig {
             admin_group: String::new(),
             cert_groups: HashMap::new(),
             groups_delimiter: default_groups_delimiter(),
+            trusted_proxies: Vec::new(),
         }
     }
 }

@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Verify — Code Signing Service</title>
+<link rel="stylesheet" href="/static/pki_styles.css">
+</head>
+<body>
+<div class="portal-wrapper">
+<div class="portal-header-bar">
+    <a href="/static/index.html">
+    <img src="data:image/png;base64,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d6nvANQjYAIAIOnUaj8GFV0KLWJ/J1FtF/vbpb4DUI+ACQCApFMr/RhSdCWsiP2dZLVd7G9X+g1APQImAACSTq30Y0jRlbAi9neS1Xaxv13pNwD1CJgAAEg6s9KPAUVXworY12lUm8W+dqXfANQjYAIAIOnMKj+GE10IKWJfp1ltFvvahT4D3fcLv/ALfd87o+r3fu/3qv/7v/+LzTCGgAkAgKQzq/y4EFiqNos9nWa1WexrF/oMdJ+AaTYETAAAJJ1Z5ceFwFK1WezrNKvNYl+70OcSjz76aHXttddWf/M3f1Mde+yx1W//9m9Xz3/+86vtttuu2nzzzatVq1ZVP/uzP1utv/76vf8//dnOO+9c/cqv/Ep1yCGHVKtXr67OPffc6pprrqkefPDB2DxQk4BpNgRMAAAknVjlx0XA8mqr2M9ZVFvFfnahz03dcMMN1emnn1699KUvrVauXNk3ztxKQdRznvOc6u1vf3t1xRVXVA8//HD8aGAIAdNstDFg+uu//uve92fcx5OoNN4NN9yw98uB3Xbbrdp3332rI488sjrttNOqNWvWTO17Ov3SYvlc163vfve7Ezmu77nnnt4vQn7mZ36m7zPqVPq37I477ojN/kTu+P793/99IuMDAMp1YoUfTyaWqs1iX2dRbRb72oU+j/PYY49VF110UfXiF784+4S7aW2wwQbVAQccUP3d3/1d70opYDgB02wsWsA0rtL39Cte8YrqggsuqB566KHYtWy5AcwkAqa77rqret7znpf9b93ee+/da2OU3PEJmACgPTqxwo8nE0vVZrGvs6g2i33tQp+HSQuo888/v9phhx36xjPLSr89P+6443qLB6CfgGk2BEzDa4sttqhOPvnkidzunBvAlAZMt99+e/XMZz4zO1zaZ599qnvvvTc22yd3fAImAGiPTqzw48nEUrVZ7Ossqs1iX7vQ50HSs5X23HPPvnHMs3baaScn1zCAgGk2BEzja9ttt60uu+yyouMrN4ApCZhuu+22avfdd88Ol9IVvmvXro3NDpQ7PgETALRHJ1b48WRiqdos9nUW1Waxr13o83L/+7//W5144onVeuut1zeGeZeACQYTMM2GgKlepZDmne98Z+/fkxy5AUxuwHTLLbdUu+66a3a4lJ5J2OTKrdzxCZgAoD06scKPJxNL1Waxr7OoNot97UKflzzwwAPVQQcd1Nf3tpSACQYTMM2GgKlZHX300VkhU24AkxMwff/736+e/vSnZ4dL6RlUP/zhD2OzI+WOT8AEAO3R+hV+PJFYqraL/Z1FtV3sbxf6nd6a86xnPauvz20qARMMJmCaDQFT8zrppJMah0y5AUzTgCm9FTU9YzA3XDr44IOz3qSXOz4BEwC0R7tX9x0NJZbEPk+zuiD2ue19v//++3tvzYn9bVsJmGAwAdNsCJiaV+rbmjVrGh1vuQFMk4Dpe9/7XrXddtv1tVG3DjnkkOqRRx6JzdaSOz4BEwC0R3tX9/9fPJFYqi6IfZ5mdUHsc5v7nn6z/JKXvKSvr20sARMwTwKmvPrlX/7l6rHHHotdHyo3gKkbMH3729+utt56677t69brXve66tFHH43N1pY7PgETALTHTFb3y08EmoonErntzEPs8zSrC2Kfc/tesm1d7373u/v6mVsrVqyo9t9//95Dwv/xH/+x+ta3vlXddddd1UMPPdQLstJzKu68887en6e3DJ122mnVG97whmqXXXbpa2tQCZiAeRIw5dfHPvax2t/fuQFMnYDpG9/4RvXkJz+5b9u6dfjhhzcKywbJHZ+ACQDaY3or9BGBQqq64nZNt5+32O9pVFfEfjftf9wup406rr766uxnTyyvnXfeufrgBz/Yu9Uu1w9+8IPq/PPPrw488MBqgw026PuMVAImYJ7WpYAp3SI27Ps0/Xn6Pr/xxhurT33qU9Ub3/jGxrdhxtpvv/1qz1luADMuYPr6179ebb755n3b1a1jjjmm+tGPfhSbbSx3fAImAGiPya7Mg3gSsLzqits13b4NYt8nWV0S+950DHG7nDbGSSf6e+65Z1/7Ternf/7nq3POOWciJ9zL3XvvvdXZZ59dPeMZz/ipzxMwAfO0KAHTIHfccUf16le/OvuXEqmPt912W2x2oNwAZlTAdM0111Sbbrpp3zZ16y1vecvE9nnu+ARMANAek1uZB/EEYFDVEbdpsm1bxL5Psrok9r3JGOI2g2oSPvShD/W126R23XXX6vrrr4/NTtzll19evehFL+p95iwCpltuuaX6+Mc/Xq1evbp3NdUzn/nM3u0U6bf36623XrX++utXG2+8cfW0pz2t168jjzyyN5fpmR5dkq4YO/fcc6vXvva11e67795beKXxpavH0nj32muv3ivGL7roomrt2rVx85lZhP2RFq1XXXVV9c53vrN62cteVu24447VJpts8pP9sdVWW1XPfe5zq2uvvTZu2krp2TT//M//XJ155pnVEUcc0btyJX1fbLbZZtWGG27YW1ivXLmyd8xtu+22vRcMpODibW97W3XBBRe0ehG9yAFTkn7+0EMPzQ6ZLr744lqfmRvADAuY0kPG0/dE/Pm6ddxxx010f+eOT8AEAO3R7hX/CPEEY3l1Tey/scxPWrzHfjepdCvMvffeG5ttbFoBU3ob2sYbb9y37ajaa6+9Wnvy3vWAaV3bH9MIdEpMoz/pWNh88837th1XaZtbb701NrdOEDDNRm4AMyxgStJ30Kte9arG32/LK12hd9lllw39jLpyxydgAoD26Maqf4B4grG8uib231jm57HHHqt23XXXvr43qe233773G90S0wqYkhR8xG3HVVo8TFO6XeP9739/dc4558T/NFLXA6bk9a9/fd+242oW++Mv/uIvevujzhiWTCPQKTGt/hx11FGNj4dU++yzT29Bv64RMM1GbgAzKmBK0r97hxxySNZ8LdXKlSurSy65ZOTnjJM7PgETALRHN1b9Q8STjOXVJbHvxjFfV1xxRV//cyrdMve5z30u6+G+6XlOTRewdQOmL37xi33bjqsdd9yxuvPOO2NTxdIbjU4//fTqqU99au9zTj755PgjI60LAVPaH03bnub+OOOMM6ptttmm9zlpf9QZw5JpBTq5ptWfa665Jvsxnh6uXPo8pvQGr9e+9rVZ3y3TIGCajdwAZlzAlKTvuHRM5czZUq1YsaL69Kc/nX1c5o5PwAQA7dGtlX8QTzKWF7MX90GX98db3/rWvjHk1pOf/OTq8MMPr84999zeM3duueWW3kI+nYSn3xynMOmmm26qrr766upDH/pQ72e33HLLvnbGVd2AKXn2s5/dt/24StvccccdsaksN9xwQ7V69epqs802+6nPWMSAKWnD/nj729/ed+uXgGm4fffdt/ExsVS/+Iu/WF188cWNFuLpyqe///u/r17+8pf3PnennXZqtP00CZhmIzeAqRMwJWnfHXrooVnztlTrr79+9clPfjLr2Mwdn4AJANqjeyv/IJ5oLC9mJ8591/dDCn723nvvvrG0uZoETOnKqrh9ndpiiy2qCy+8sBe4NPX973+/98DwdJvQsIX5ogZMaX80bT9V2h8X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AACGWai0IAYlgwrzBAAAADSzUElBDEkGFeYJAAAAaGahkoIYkgwqzBMAAADQzMIlBTEoEZoMFufGPAEAAADDLFxaEMMSwclgcW7MEwAAADDMwqYFApN6zBMAAAAwjtQAAAAAgCICphZxtRAAAADQRZKMFojPOBI0AQAAAF0iwWiBGCoJmAAAAIAukWDMWQyUBhUAAABAm0kv5iyGSYMKAAAAoM2kF3MWw6RBBQAAANBm0osWiIGScAkAAADoEglGC8RQScAEAAAAdIkEo0UESwAAAEAXSTIAAAAAKCJgAgAAAKCIgAkAAACAIgImAAAAAIoImAAAAAAoImACAAAAoIiACQAAAIAiAiYAAAAAigiYAAAAACgiYAIAAACgiIAJAAAAgCICJgAAAACKCJgAAAAAKCJgAgAAAKCIgAkAAACAIgImAAAAAIoImAAAAAAoImACAAAAoIiACQAAAIAiAiYAAAAAigiYAAAAACgiYAIAAACgiIAJAAAAgCICJgAAAACKCJgAAAAAKCJgAgAAAKCIgAkAAACAIgImAAAAAIoImAAAAAAoImACAAAAoIiACQAAAIAiAiYAAAAAigiYAAAAACgiYAIAAACgiIAJAAAAgCICJgAAAACKCJgAAAAAKCJgAgAAAKCIgAkAAACAIgImAAAAAIoImAAAAAAoImACAAAAoIiACQAAAIAiAiYAAAAAigiYAAAAACgiYAIAAACgiIAJAAAAgCICJgAAAACKCJgAAAAAKCJgAgAAAKCIgAkAAACAIgImAAAAAIoImAAAAAAoImACAAAAoIiACQAAAIAiAiYAAAAAigiYAAAAACgiYAIAAACgiIAJAAAAgCICJgAAAACKCJgAAAAAKCJgAgAAAKCIgAkAAACAIgImAAAAAIoImAAAAAAoImACAAAAoIiACQAAAIAiAiYAAAAAigiYAAAAACgiYAIAAACgyP8D9enI3d3BSAUAAAAASUVORK5CYII=" alt="Code Signing Service" height="90">
+    </a>
+</div>
+<div class="portal-menubar">
+    <div>Signature Verification</div>
+    <div>Code Signing Engine</div>
+</div>
+
+<div class="portal-body">
+<div class="portal-sidebar">
+    <h3>Navigation</h3>
+    <ul>
+        <li><a href="/static/index.html">Sign Files</a></li>
+        <li><a href="/static/verify.html"><strong>Verify Signature</strong></a></li>
+        <li><a href="/static/admin.html">Administration</a></li>
+    </ul>
+    <h3>API Endpoints</h3>
+    <ul>
+        <li><a href="/api/v1/health">Health Check</a></li>
+        <li><a href="/api/v1/status">Server Status</a></li>
+        <li><a href="/api/v1/certificate">Certificates</a></li>
+    </ul>
+    <h3>Information</h3>
+    <ul>
+        <li>Authenticode Signing</li>
+        <li>Detached CMS/PKCS#7</li>
+        <li>RFC 3161 Timestamping</li>
+    </ul>
+</div>
+
+<div class="portal-main">
+    <div class="container">
+        <div class="header">
+            <span class="header-title">Signature Verification</span>
+            <nav class="header-nav">
+                <a href="/static/index.html">Sign</a>
+                <a href="/static/verify.html" class="active">Verify</a>
+                <a href="/static/admin.html">Admin</a>
+            </nav>
+        </div>
+
+        <p style="color:#63666A;margin-bottom:16px;">Verify Authenticode signatures and detached CMS/PKCS#7 signatures</p>
+
+        <!-- Verify Signed File -->
+        <div class="card mb-2">
+            <div class="card-header">Verify Signed File (Authenticode)</div>
+            <div class="card-body">
+                <form id="verify-form" aria-label="Verify an embedded signature">
+                    <div class="form-group">
+                        <label for="verify-file-input">Upload Signed File</label>
+                        <div class="drop-zone" id="verify-drop-zone" role="button" tabindex="0"
+                             aria-label="Drop a signed file here or click to browse">
+                            <span class="drop-zone-icon" aria-hidden="true">&#128270;</span>
+                            <span class="drop-zone-text">
+                                Drag and drop a signed file, or <strong>click to browse</strong>
+                            </span>
+                            <span class="drop-zone-hint">
+                                Supported: .exe, .dll, .sys, .ps1, .psm1, .psd1, .cab, .msi
+                            </span>
+                            <span class="drop-zone-selected" id="verify-file-name"></span>
+                            <input type="file" id="verify-file-input" name="file"
+                                   accept=".exe,.dll,.sys,.ocx,.scr,.cpl,.drv,.ps1,.psm1,.psd1,.cab,.msi">
+                        </div>
+                    </div>
+                    <button type="submit" class="btn primary" id="verify-submit-btn" disabled>
+                        Verify Signature
+                    </button>
+                </form>
+
+                <div class="progress-bar" id="verify-progress" role="progressbar" aria-label="Verification in progress">
+                    <div class="progress-track"><div class="progress-fill"></div></div>
+                    <div class="progress-text">Verifying signature...</div>
+                </div>
+
+                <div class="result-panel" id="verify-result" role="status" aria-live="polite">
+                    <h3 id="verify-result-title"></h3>
+                    <div id="verify-result-body"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Verify Detached Signature -->
+        <div class="card mb-2">
+            <div class="card-header">Verify Detached Signature (CMS/PKCS#7)</div>
+            <div class="card-body">
+                <form id="verify-detach-form" aria-label="Verify a detached signature">
+                    <div class="form-group">
+                        <label for="verify-detach-file-input">Original File</label>
+                        <div class="drop-zone" id="verify-detach-file-drop" role="button" tabindex="0"
+                             aria-label="Drop the original file here or click to browse">
+                            <span class="drop-zone-icon" aria-hidden="true">&#128196;</span>
+                            <span class="drop-zone-text">
+                                Drop the <strong>original file</strong> here
+                            </span>
+                            <span class="drop-zone-selected" id="verify-detach-file-name"></span>
+                            <input type="file" id="verify-detach-file-input" name="file">
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="verify-detach-sig-input">Signature File (.p7s)</label>
+                        <div class="drop-zone" id="verify-detach-sig-drop" role="button" tabindex="0"
+                             aria-label="Drop the .p7s signature file here or click to browse">
+                            <span class="drop-zone-icon" aria-hidden="true">&#128209;</span>
+                            <span class="drop-zone-text">
+                                Drop the <strong>.p7s signature</strong> here
+                            </span>
+                            <span class="drop-zone-selected" id="verify-detach-sig-name"></span>
+                            <input type="file" id="verify-detach-sig-input" name="signature" accept=".p7s,.sig">
+                        </div>
+                    </div>
+
+                    <button type="submit" class="btn primary" id="verify-detach-submit-btn" disabled>
+                        Verify Detached Signature
+                    </button>
+                </form>
+
+                <div class="progress-bar" id="verify-detach-progress" role="progressbar" aria-label="Verification in progress">
+                    <div class="progress-track"><div class="progress-fill"></div></div>
+                    <div class="progress-text">Verifying detached signature...</div>
+                </div>
+
+                <div class="result-panel" id="verify-detach-result" role="status" aria-live="polite">
+                    <h3 id="verify-detach-result-title"></h3>
+                    <div id="verify-detach-result-body"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Status Bar -->
+        <div class="status-bar" id="status-bar" role="status" aria-label="Server status">
+            <span><span class="status-dot" id="status-dot"></span> <span id="status-text">Checking server...</span></span>
+            <span id="status-version"></span>
+            <span id="status-uptime"></span>
+        </div>
+    </div>
+</div>
+</div>
+
+<div class="portal-footer">
+    <div class="portal-footer-content">
+        Code Signing Service v<span id="footer-version">0.5.0</span>
+    </div>
+</div>
+</div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

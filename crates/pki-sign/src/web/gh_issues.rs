@@ -69,23 +69,30 @@ impl GitHubIssueReporter {
             recent.insert(error_hash, Instant::now());
         }
 
-        // Build issue title and body
-        let title = format!("[auto] Signing error: {}", error_type);
+        // Build issue title and body — sanitize inputs for CLI safety
+        let safe_error_type: String = error_type
+            .chars()
+            .filter(|c| c.is_alphanumeric() || *c == ' ' || *c == '_' || *c == '-' || *c == '.')
+            .take(100)
+            .collect();
+        let title = format!("[auto] Signing error: {}", safe_error_type);
         let file_info = match (filename, file_size) {
             (Some(name), Some(size)) => format!("- **File:** {} ({} bytes)\n", name, size),
             (Some(name), None) => format!("- **File:** {}\n", name),
             _ => String::new(),
         };
 
+        // Sanitize error_message: escape backticks to prevent markdown code-block breakout
+        let safe_error_message = error_message.replace('`', "'");
         let body = format!(
             "## Automated Signing Error Report\n\n\
-             - **Error type:** {error_type}\n\
+             - **Error type:** {safe_error_type}\n\
              - **Timestamp:** {timestamp}\n\
              {file_info}\
              \n### Error Message\n\n\
-             ```\n{error_message}\n```\n\n\
+             ```\n{safe_error_message}\n```\n\n\
              ---\n\
-             *This issue was automatically created by PKI Signing Service.*",
+             *This issue was automatically created by Code Signing Service.*",
             timestamp = chrono::Utc::now().to_rfc3339(),
         );
 
@@ -140,7 +147,7 @@ impl GitHubIssueReporter {
         let full_body = format!(
             "{body}\n\n---\n\
              *Reported by: {}*\n\
-             *Submitted via PKI Signing Service issue reporter.*",
+             *Submitted via Code Signing Service issue reporter.*",
             reporter.unwrap_or("anonymous"),
         );
 

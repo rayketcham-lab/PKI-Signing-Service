@@ -1,5 +1,6 @@
 //! Route handler functions for the signing web service.
 
+use std::io::{Cursor, Write};
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Instant;
@@ -16,6 +17,53 @@ use super::audit::AuditEntry;
 use super::ldap::UserInfo;
 use super::AppState;
 use crate::error::{AppError, SignError};
+
+/// Check whether the authenticated user is authorized to use the requested certificate.
+///
+/// When LDAP is enabled and `cert_groups` is configured, the user must belong to
+/// the LDAP group mapped to the requested certificate name. Admins bypass this check.
+/// Returns `Ok(())` if authorized or if cert-group enforcement is not configured.
+fn check_cert_authorization(
+    user_info: Option<&UserInfo>,
+    cert_name: &str,
+    config: &crate::config::SignConfig,
+) -> Result<(), AppError> {
+    // No enforcement if LDAP is disabled or no cert_groups configured
+    if !config.ldap.enabled || config.ldap.cert_groups.is_empty() {
+        return Ok(());
+    }
+
+    let user = match user_info {
+        Some(u) => u,
+        None => {
+            // LDAP enabled but no user info — deny
+            return Err(AppError::new(SignError::Unauthorized(
+                "Authentication required".into(),
+            )));
+        }
+    };
+
+    // Admins can use any certificate
+    if user.is_admin {
+        return Ok(());
+    }
+
+    // If the cert has a group mapping, user must be in the allowed list
+    if config.ldap.cert_groups.contains_key(cert_name)
+        && !user.allowed_cert_names.iter().any(|c| c == cert_name)
+    {
+        tracing::warn!(
+            user = %user.username,
+            cert = %cert_name,
+            "Certificate access denied: user not in required group"
+        );
+        return Err(AppError::new(SignError::Unauthorized(format!(
+            "Not authorized to use certificate '{cert_name}'"
+        ))));
+    }
+
+    Ok(())
+}
 
 /// Sanitize a user-supplied filename for use in Content-Disposition headers.
 ///
@@ -90,6 +138,7 @@ pub async fn certificate_info(State(state): State<Arc<AppState>>) -> Json<serde_
 /// POST /api/v1/sign — Upload and sign a file.
 pub async fn sign_file(
     State(state): State<Arc<AppState>>,
+    user_info: Option<axum::Extension<UserInfo>>,
     mut multipart: axum_extra::extract::Multipart,
 ) -> Result<impl IntoResponse, AppError> {
     let start = Instant::now();
@@ -98,6 +147,7 @@ pub async fn sign_file(
     // Extract fields from multipart
     let mut file_data: Option<Vec<u8>> = None;
     let mut file_name: Option<String> = None;
+    let mut cert_type: Option<String> = None;
 
     while let Some(field) = multipart
         .next_field()
@@ -105,13 +155,25 @@ pub async fn sign_file(
         .map_err(|e| AppError::new(SignError::Internal(format!("Multipart error: {e}"))))?
     {
         let field_name = field.name().unwrap_or("").to_string();
-        if field_name.as_str() == "file" {
-            file_name = field.file_name().map(|s| s.to_string());
-            let bytes = field
-                .bytes()
-                .await
-                .map_err(|e| AppError::new(SignError::Internal(format!("Read error: {e}"))))?;
-            file_data = Some(bytes.to_vec());
+        match field_name.as_str() {
+            "file" => {
+                file_name = field.file_name().map(|s| s.to_string());
+                let bytes = field
+                    .bytes()
+                    .await
+                    .map_err(|e| AppError::new(SignError::Internal(format!("Read error: {e}"))))?;
+                file_data = Some(bytes.to_vec());
+            }
+            "cert_type" => {
+                let text = field
+                    .text()
+                    .await
+                    .map_err(|e| AppError::new(SignError::Internal(format!("Read error: {e}"))))?;
+                if !text.is_empty() {
+                    cert_type = Some(text);
+                }
+            }
+            _ => {}
         }
     }
 
@@ -179,8 +241,20 @@ pub async fn sign_file(
             "No signing credentials loaded".into(),
         )));
     }
-    let default_idx = *state.default_credential.read().await;
-    let (cert_name, cred) = &credentials[default_idx];
+    let (cert_name, cred) = if let Some(ref ct) = cert_type {
+        credentials
+            .iter()
+            .find(|(name, _)| name == ct)
+            .ok_or_else(|| {
+                AppError::new(SignError::Config(format!("Certificate '{}' not found", ct)))
+            })?
+    } else {
+        let default_idx = *state.default_credential.read().await;
+        &credentials[default_idx]
+    };
+
+    // #9 fix: Enforce LDAP cert-group authorization
+    check_cert_authorization(user_info.as_ref().map(|e| &e.0), cert_name, &state.config)?;
 
     // Sign the file
     let tsa_config = if state.config.require_timestamp {
@@ -189,55 +263,63 @@ pub async fn sign_file(
         None
     };
 
-    let result = crate::signer::sign_file(temp_input.path(), temp_output.path(), cred, tsa_config)
-        .await
-        .map_err(|e| {
-            state.stats.sign_errors.fetch_add(1, Ordering::Relaxed);
-            let duration = start.elapsed().as_millis() as u64;
-            state.audit.log(&AuditEntry {
-                timestamp: chrono::Utc::now().to_rfc3339(),
-                request_id: request_id.to_string(),
-                action: "sign".into(),
-                client_ip: None,
-                filename: Some(filename.clone()),
-                file_size: Some(data.len() as u64),
-                file_hash: Some(input_hash.clone()),
-                signed_hash: None,
-                signer_subject: Some(cert_name.clone()),
-                timestamped: None,
-                duration_ms: duration,
-                status: "error".into(),
-                error_message: Some(e.to_string()),
-            });
+    let sign_options = crate::signer::SignOptions {
+        allow_resign: super::middleware::is_dev_mode_allowed(state.config.dev_mode),
+    };
 
-            // Auto-report to GitHub if enabled
-            if state.gh_reporter.is_some() {
-                let error_type = format!("{:?}", e)
-                    .split('(')
-                    .next()
-                    .unwrap_or("Unknown")
-                    .to_string();
-                let error_msg = e.to_string();
-                let fname = filename.clone();
-                let fsize = data.len() as u64;
-                let state_clone = Arc::clone(&state);
-                // Fire-and-forget: spawn a task to create the issue
-                drop(tokio::spawn(async move {
-                    if let Some(ref reporter) = state_clone.gh_reporter {
-                        reporter
-                            .report_signing_error(
-                                &error_type,
-                                &error_msg,
-                                Some(&fname),
-                                Some(fsize),
-                            )
-                            .await;
-                    }
-                }));
-            }
+    let result = crate::signer::sign_file_with_options(
+        temp_input.path(),
+        temp_output.path(),
+        cred,
+        tsa_config,
+        &sign_options,
+    )
+    .await
+    .map_err(|e| {
+        state.stats.sign_errors.fetch_add(1, Ordering::Relaxed);
+        let duration = start.elapsed().as_millis() as u64;
+        state.audit.log(&AuditEntry {
+            timestamp: chrono::Utc::now().to_rfc3339(),
+            request_id: request_id.to_string(),
+            action: "sign".into(),
+            client_ip: None,
+            filename: Some(filename.clone()),
+            file_size: Some(data.len() as u64),
+            file_hash: Some(input_hash.clone()),
+            signed_hash: None,
+            signer_subject: Some(cert_name.clone()),
+            timestamped: None,
+            duration_ms: duration,
+            status: "error".into(),
+            error_message: Some(e.to_string()),
+            cert_type: None,
+            signed_filename: None,
+            file_type: None,
+        });
 
-            AppError::new(e)
-        })?;
+        // Auto-report to GitHub if enabled
+        if state.gh_reporter.is_some() {
+            let error_type = format!("{:?}", e)
+                .split('(')
+                .next()
+                .unwrap_or("Unknown")
+                .to_string();
+            let error_msg = e.to_string();
+            let fname = filename.clone();
+            let fsize = data.len() as u64;
+            let state_clone = Arc::clone(&state);
+            // Fire-and-forget: spawn a task to create the issue
+            drop(tokio::spawn(async move {
+                if let Some(ref reporter) = state_clone.gh_reporter {
+                    reporter
+                        .report_signing_error(&error_type, &error_msg, Some(&fname), Some(fsize))
+                        .await;
+                }
+            }));
+        }
+
+        AppError::new(e)
+    })?;
 
     let duration = start.elapsed().as_millis() as u64;
 
@@ -267,6 +349,9 @@ pub async fn sign_file(
         duration_ms: duration,
         status: "success".into(),
         error_message: None,
+        cert_type: None,
+        signed_filename: None,
+        file_type: None,
     });
 
     // Build response with custom headers
@@ -289,9 +374,12 @@ pub async fn sign_file(
     );
     headers.insert(
         header::CONTENT_DISPOSITION,
-        format!("attachment; filename=\"{}\"", sanitize_filename(&filename))
-            .parse()
-            .unwrap(),
+        format!(
+            "attachment; filename=\"signed_{}\"",
+            sanitize_filename(&filename)
+        )
+        .parse()
+        .unwrap(),
     );
 
     Ok((headers, Bytes::from(result.signed_data)))
@@ -301,6 +389,7 @@ pub async fn sign_file(
 pub async fn sign_detached(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
+    user_info: Option<axum::Extension<UserInfo>>,
     mut multipart: axum_extra::extract::Multipart,
 ) -> Result<impl IntoResponse, AppError> {
     let start = Instant::now();
@@ -309,19 +398,32 @@ pub async fn sign_detached(
     // Extract file from multipart
     let mut file_data: Option<Vec<u8>> = None;
     let mut file_name: Option<String> = None;
+    let mut cert_type: Option<String> = None;
 
     while let Some(field) = multipart
         .next_field()
         .await
         .map_err(|e| AppError::new(SignError::Internal(format!("Multipart error: {e}"))))?
     {
-        if field.name() == Some("file") {
-            file_name = field.file_name().map(|s| s.to_string());
-            let bytes = field
-                .bytes()
-                .await
-                .map_err(|e| AppError::new(SignError::Internal(format!("Read error: {e}"))))?;
-            file_data = Some(bytes.to_vec());
+        match field.name() {
+            Some("file") => {
+                file_name = field.file_name().map(|s| s.to_string());
+                let bytes = field
+                    .bytes()
+                    .await
+                    .map_err(|e| AppError::new(SignError::Internal(format!("Read error: {e}"))))?;
+                file_data = Some(bytes.to_vec());
+            }
+            Some("cert_type") => {
+                let text = field
+                    .text()
+                    .await
+                    .map_err(|e| AppError::new(SignError::Internal(format!("Read error: {e}"))))?;
+                if !text.is_empty() {
+                    cert_type = Some(text);
+                }
+            }
+            _ => {}
         }
     }
 
@@ -360,8 +462,20 @@ pub async fn sign_detached(
             "No signing credentials loaded".into(),
         )));
     }
-    let default_idx = *state.default_credential.read().await;
-    let (cert_name, cred) = &credentials[default_idx];
+    let (cert_name, cred) = if let Some(ref ct) = cert_type {
+        credentials
+            .iter()
+            .find(|(name, _)| name == ct)
+            .ok_or_else(|| {
+                AppError::new(SignError::Config(format!("Certificate '{}' not found", ct)))
+            })?
+    } else {
+        let default_idx = *state.default_credential.read().await;
+        &credentials[default_idx]
+    };
+
+    // #9 fix: Enforce LDAP cert-group authorization
+    check_cert_authorization(user_info.as_ref().map(|e| &e.0), cert_name, &state.config)?;
 
     let tsa_config = if state.config.require_timestamp {
         Some(&state.config.tsa)
@@ -404,6 +518,9 @@ pub async fn sign_detached(
         duration_ms: duration,
         status: "success".into(),
         error_message: None,
+        cert_type: None,
+        signed_filename: None,
+        file_type: None,
     });
 
     // Return based on Accept header
@@ -442,7 +559,7 @@ pub async fn sign_detached(
         resp_headers.insert(
             header::CONTENT_DISPOSITION,
             format!(
-                "attachment; filename=\"{}.p7s\"",
+                "attachment; filename=\"signed_{}.p7s\"",
                 sanitize_filename(
                     std::path::Path::new(&filename)
                         .file_stem()
@@ -520,6 +637,9 @@ pub async fn verify_file(
             duration_ms: duration,
             status: "error".into(),
             error_message: Some(e.to_string()),
+            cert_type: None,
+            signed_filename: None,
+            file_type: None,
         });
         AppError::new(e)
     })?;
@@ -544,6 +664,9 @@ pub async fn verify_file(
         duration_ms: duration,
         status: "success".into(),
         error_message: None,
+        cert_type: None,
+        signed_filename: None,
+        file_type: None,
     });
 
     Ok(Json(serde_json::json!({
@@ -623,6 +746,9 @@ pub async fn verify_detached(
             duration_ms: duration,
             status: "error".into(),
             error_message: Some(e.to_string()),
+            cert_type: None,
+            signed_filename: None,
+            file_type: None,
         });
         AppError::new(e)
     })?;
@@ -644,6 +770,9 @@ pub async fn verify_detached(
         duration_ms: duration,
         status: "success".into(),
         error_message: None,
+        cert_type: None,
+        signed_filename: None,
+        file_type: None,
     });
 
     Ok(Json(serde_json::json!({
@@ -696,6 +825,420 @@ pub async fn report_issue(
             "Failed to create issue: {e}"
         )))),
     }
+}
+
+/// Classify a file for signing based on extension.
+fn classify_file_type(filename: &str) -> (&'static str, bool) {
+    let ext = std::path::Path::new(filename)
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_lowercase())
+        .unwrap_or_default();
+    match ext.as_str() {
+        "exe" | "dll" | "sys" | "ocx" | "scr" | "cpl" | "drv" => ("Authenticode", false),
+        "ps1" => ("PowerShell", false),
+        "msi" => ("MSI Authenticode", false),
+        "cab" => ("CAB Authenticode", false),
+        _ => ("Detached CMS", true),
+    }
+}
+
+/// POST /api/v1/sign-batch — Sign multiple files and return a ZIP archive.
+///
+/// Accepts multipart with multiple `file` fields (max 10) and optional `cert_type`.
+/// Returns a ZIP containing all signed files (with `signed_` prefix) plus a
+/// `signing_summary.csv` with standardized audit columns.
+pub async fn sign_batch(
+    State(state): State<Arc<AppState>>,
+    user_info: Option<axum::Extension<UserInfo>>,
+    mut multipart: axum_extra::extract::Multipart,
+) -> Result<impl IntoResponse, AppError> {
+    let start = Instant::now();
+    let request_id = Uuid::new_v4();
+
+    // Extract files and cert_type from multipart
+    let mut files: Vec<(String, Vec<u8>)> = Vec::new();
+    let mut cert_type: Option<String> = None;
+
+    while let Some(field) = multipart
+        .next_field()
+        .await
+        .map_err(|e| AppError::new(SignError::Internal(format!("Multipart error: {e}"))))?
+    {
+        match field.name() {
+            Some("file") => {
+                let name = field.file_name().unwrap_or("unknown").to_string();
+                let bytes = field
+                    .bytes()
+                    .await
+                    .map_err(|e| AppError::new(SignError::Internal(format!("Read error: {e}"))))?;
+                if files.len() < 10 {
+                    files.push((name, bytes.to_vec()));
+                }
+            }
+            Some("cert_type") => {
+                let text = field
+                    .text()
+                    .await
+                    .map_err(|e| AppError::new(SignError::Internal(format!("Read error: {e}"))))?;
+                if !text.is_empty() {
+                    cert_type = Some(text);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    if files.is_empty() {
+        return Err(AppError::new(SignError::Internal(
+            "No files uploaded".into(),
+        )));
+    }
+
+    // Get signing credentials
+    let credentials = state.credentials.read().await;
+    if credentials.is_empty() {
+        return Err(AppError::new(SignError::Config(
+            "No signing credentials loaded".into(),
+        )));
+    }
+    let (cert_name, cred) = if let Some(ref ct) = cert_type {
+        credentials
+            .iter()
+            .find(|(name, _)| name == ct)
+            .ok_or_else(|| {
+                AppError::new(SignError::Config(format!("Certificate '{}' not found", ct)))
+            })?
+    } else {
+        let default_idx = *state.default_credential.read().await;
+        &credentials[default_idx]
+    };
+
+    // #9 fix: Enforce LDAP cert-group authorization
+    check_cert_authorization(user_info.as_ref().map(|e| &e.0), cert_name, &state.config)?;
+
+    let tsa_config = if state.config.require_timestamp {
+        Some(&state.config.tsa)
+    } else {
+        None
+    };
+
+    // Sign each file and collect results
+    struct BatchResult {
+        original_filename: String,
+        signed_filename: String,
+        original_hash: String,
+        signed_hash: String,
+        size_bytes: u64,
+        file_type: String,
+        datetime: String,
+        status: String,
+        error_message: Option<String>,
+        signed_data: Option<Vec<u8>>,
+    }
+
+    let mut results: Vec<BatchResult> = Vec::new();
+
+    for (filename, data) in &files {
+        let input_hash = hex::encode(Sha256::digest(data));
+        let (file_type_str, use_detached) = classify_file_type(filename);
+        let signed_name = format!("signed_{}", sanitize_filename(filename));
+        let now = chrono::Utc::now();
+        let datetime_str = now.to_rfc3339();
+
+        // Validate file size
+        if data.len() as u64 > state.config.max_upload_size {
+            results.push(BatchResult {
+                original_filename: filename.clone(),
+                signed_filename: signed_name,
+                original_hash: input_hash,
+                signed_hash: String::new(),
+                size_bytes: data.len() as u64,
+                file_type: file_type_str.to_string(),
+                datetime: datetime_str,
+                status: "FAILED".to_string(),
+                error_message: Some("File exceeds maximum upload size".to_string()),
+                signed_data: None,
+            });
+            continue;
+        }
+
+        if use_detached {
+            // Detached CMS signing
+            let temp_input = tempfile::Builder::new()
+                .prefix("pki-sign-batch-")
+                .tempfile_in("/dev/shm")
+                .or_else(|_| {
+                    tempfile::Builder::new()
+                        .prefix("pki-sign-batch-")
+                        .tempfile()
+                })
+                .map_err(|e| AppError::new(SignError::Io(e)))?;
+
+            std::fs::write(temp_input.path(), data).map_err(|e| AppError::new(SignError::Io(e)))?;
+
+            match crate::signer::sign_detached(temp_input.path(), cred, tsa_config).await {
+                Ok(result) => {
+                    let p7s_name = format!(
+                        "signed_{}.p7s",
+                        std::path::Path::new(filename)
+                            .file_stem()
+                            .and_then(|s| s.to_str())
+                            .unwrap_or("file")
+                    );
+                    results.push(BatchResult {
+                        original_filename: filename.clone(),
+                        signed_filename: p7s_name,
+                        original_hash: input_hash,
+                        signed_hash: result.p7s_hash,
+                        size_bytes: result.p7s_data.len() as u64,
+                        file_type: file_type_str.to_string(),
+                        datetime: datetime_str,
+                        status: "OK".to_string(),
+                        error_message: None,
+                        signed_data: Some(result.p7s_data),
+                    });
+                    state.stats.files_signed.fetch_add(1, Ordering::Relaxed);
+                    state
+                        .stats
+                        .bytes_signed
+                        .fetch_add(data.len() as u64, Ordering::Relaxed);
+                }
+                Err(e) => {
+                    state.stats.sign_errors.fetch_add(1, Ordering::Relaxed);
+                    results.push(BatchResult {
+                        original_filename: filename.clone(),
+                        signed_filename: signed_name,
+                        original_hash: input_hash,
+                        signed_hash: String::new(),
+                        size_bytes: data.len() as u64,
+                        file_type: file_type_str.to_string(),
+                        datetime: datetime_str,
+                        status: "FAILED".to_string(),
+                        error_message: Some(e.to_string()),
+                        signed_data: None,
+                    });
+                }
+            }
+        } else {
+            // Authenticode / PowerShell / MSI / CAB signing
+            let ext = std::path::Path::new(filename)
+                .extension()
+                .and_then(|e| e.to_str())
+                .map(|e| e.to_lowercase())
+                .unwrap_or_default();
+
+            // Validate PE magic bytes
+            if matches!(
+                ext.as_str(),
+                "exe" | "dll" | "sys" | "ocx" | "scr" | "cpl" | "drv"
+            ) && (data.len() < 2 || data[0] != b'M' || data[1] != b'Z')
+            {
+                results.push(BatchResult {
+                    original_filename: filename.clone(),
+                    signed_filename: signed_name,
+                    original_hash: input_hash,
+                    signed_hash: String::new(),
+                    size_bytes: data.len() as u64,
+                    file_type: file_type_str.to_string(),
+                    datetime: datetime_str,
+                    status: "FAILED".to_string(),
+                    error_message: Some("File does not have MZ header".to_string()),
+                    signed_data: None,
+                });
+                continue;
+            }
+
+            let temp_input = tempfile::Builder::new()
+                .prefix("pki-sign-batch-in-")
+                .suffix(&format!(".{ext}"))
+                .tempfile_in("/dev/shm")
+                .or_else(|_| {
+                    tempfile::Builder::new()
+                        .prefix("pki-sign-batch-in-")
+                        .tempfile()
+                })
+                .map_err(|e| AppError::new(SignError::Io(e)))?;
+
+            let temp_output = tempfile::Builder::new()
+                .prefix("pki-sign-batch-out-")
+                .suffix(&format!(".{ext}"))
+                .tempfile_in("/dev/shm")
+                .or_else(|_| {
+                    tempfile::Builder::new()
+                        .prefix("pki-sign-batch-out-")
+                        .tempfile()
+                })
+                .map_err(|e| AppError::new(SignError::Io(e)))?;
+
+            std::fs::write(temp_input.path(), data).map_err(|e| AppError::new(SignError::Io(e)))?;
+
+            let batch_sign_options = crate::signer::SignOptions {
+                allow_resign: super::middleware::is_dev_mode_allowed(state.config.dev_mode),
+            };
+
+            match crate::signer::sign_file_with_options(
+                temp_input.path(),
+                temp_output.path(),
+                cred,
+                tsa_config,
+                &batch_sign_options,
+            )
+            .await
+            {
+                Ok(result) => {
+                    results.push(BatchResult {
+                        original_filename: filename.clone(),
+                        signed_filename: signed_name,
+                        original_hash: input_hash,
+                        signed_hash: result.signed_hash,
+                        size_bytes: result.signed_data.len() as u64,
+                        file_type: file_type_str.to_string(),
+                        datetime: datetime_str,
+                        status: "OK".to_string(),
+                        error_message: None,
+                        signed_data: Some(result.signed_data),
+                    });
+                    state.stats.files_signed.fetch_add(1, Ordering::Relaxed);
+                    state
+                        .stats
+                        .bytes_signed
+                        .fetch_add(data.len() as u64, Ordering::Relaxed);
+                }
+                Err(e) => {
+                    state.stats.sign_errors.fetch_add(1, Ordering::Relaxed);
+                    results.push(BatchResult {
+                        original_filename: filename.clone(),
+                        signed_filename: signed_name,
+                        original_hash: input_hash,
+                        signed_hash: String::new(),
+                        size_bytes: data.len() as u64,
+                        file_type: file_type_str.to_string(),
+                        datetime: datetime_str,
+                        status: "FAILED".to_string(),
+                        error_message: Some(e.to_string()),
+                        signed_data: None,
+                    });
+                }
+            }
+        }
+    }
+
+    let duration = start.elapsed().as_millis() as u64;
+    state
+        .stats
+        .sign_duration_total_ms
+        .fetch_add(duration, Ordering::Relaxed);
+
+    // Build ZIP archive in memory
+    let buf = Cursor::new(Vec::new());
+    let mut zip = zip::ZipWriter::new(buf);
+    let options = zip::write::SimpleFileOptions::default()
+        .compression_method(zip::CompressionMethod::Deflated);
+
+    // Add signed files to ZIP
+    for r in &results {
+        if let Some(ref data) = r.signed_data {
+            zip.start_file(&r.signed_filename, options)
+                .map_err(|e| AppError::new(SignError::Internal(format!("ZIP error: {e}"))))?;
+            zip.write_all(data)
+                .map_err(|e| AppError::new(SignError::Internal(format!("ZIP write error: {e}"))))?;
+        }
+    }
+
+    // Build signing_summary.csv
+    let mut csv_buf = Vec::new();
+    {
+        let mut wtr = csv::Writer::from_writer(&mut csv_buf);
+        wtr.write_record([
+            "Original Filename",
+            "Signed Filename",
+            "Original Hash",
+            "Signed Hash",
+            "Size (bytes)",
+            "Type",
+            "Date/Time",
+            "Status",
+            "Error",
+        ])
+        .map_err(|e| AppError::new(SignError::Internal(format!("CSV error: {e}"))))?;
+        for r in &results {
+            wtr.write_record([
+                &r.original_filename,
+                &r.signed_filename,
+                &r.original_hash,
+                &r.signed_hash,
+                &r.size_bytes.to_string(),
+                &r.file_type,
+                &r.datetime,
+                &r.status,
+                r.error_message.as_deref().unwrap_or(""),
+            ])
+            .map_err(|e| AppError::new(SignError::Internal(format!("CSV error: {e}"))))?;
+        }
+        wtr.flush()
+            .map_err(|e| AppError::new(SignError::Internal(format!("CSV flush error: {e}"))))?;
+    }
+
+    zip.start_file("signing_summary.csv", options)
+        .map_err(|e| AppError::new(SignError::Internal(format!("ZIP error: {e}"))))?;
+    zip.write_all(&csv_buf)
+        .map_err(|e| AppError::new(SignError::Internal(format!("ZIP write error: {e}"))))?;
+
+    let zip_data = zip
+        .finish()
+        .map_err(|e| AppError::new(SignError::Internal(format!("ZIP finish error: {e}"))))?
+        .into_inner();
+
+    // Emit per-file audit entries
+    for r in &results {
+        state.audit.log(&AuditEntry {
+            timestamp: r.datetime.clone(),
+            request_id: request_id.to_string(),
+            action: "sign_batch".into(),
+            client_ip: None,
+            filename: Some(r.original_filename.clone()),
+            file_size: Some(r.size_bytes),
+            file_hash: Some(r.original_hash.clone()),
+            signed_hash: if r.signed_hash.is_empty() {
+                None
+            } else {
+                Some(r.signed_hash.clone())
+            },
+            signer_subject: Some(cert_name.clone()),
+            timestamped: None,
+            duration_ms: duration,
+            status: r.status.to_lowercase(),
+            error_message: r.error_message.clone(),
+            cert_type: cert_type.clone(),
+            signed_filename: Some(r.signed_filename.clone()),
+            file_type: Some(r.file_type.clone()),
+        });
+    }
+
+    // Build response
+    let mut headers = HeaderMap::new();
+    headers.insert("X-Request-Id", request_id.to_string().parse().unwrap());
+    headers.insert(
+        "X-PKI-Sign-Files-Total",
+        results.len().to_string().parse().unwrap(),
+    );
+    let ok_count = results.iter().filter(|r| r.status == "OK").count();
+    headers.insert(
+        "X-PKI-Sign-Files-Signed",
+        ok_count.to_string().parse().unwrap(),
+    );
+    headers.insert(
+        "X-PKI-Sign-Duration-Ms",
+        duration.to_string().parse().unwrap(),
+    );
+    headers.insert(header::CONTENT_TYPE, "application/zip".parse().unwrap());
+    headers.insert(
+        header::CONTENT_DISPOSITION,
+        "attachment; filename=\"signed_files.zip\"".parse().unwrap(),
+    );
+
+    Ok((headers, Bytes::from(zip_data)))
 }
 
 // ─── Admin Handlers ──────────────────────────────────────────────────
@@ -793,6 +1336,9 @@ pub async fn admin_reload(State(state): State<Arc<AppState>>) -> impl IntoRespon
         duration_ms: 0,
         status: "success".into(),
         error_message: None,
+        cert_type: None,
+        signed_filename: None,
+        file_type: None,
     });
 
     (
@@ -904,6 +1450,9 @@ pub async fn admin_set_default_cert(
                 duration_ms: 0,
                 status: "success".into(),
                 error_message: None,
+                cert_type: None,
+                signed_filename: None,
+                file_type: None,
             });
 
             Ok(Json(serde_json::json!({
@@ -927,4 +1476,91 @@ pub async fn fallback() -> impl IntoResponse {
             "message": "The requested endpoint was not found"
         })),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::{LdapConfig, SignConfig};
+
+    fn make_user(groups: Vec<String>, is_admin: bool) -> UserInfo {
+        let config = LdapConfig {
+            cert_groups: [("server".into(), "cn=server-signers".into())]
+                .into_iter()
+                .collect(),
+            ..Default::default()
+        };
+        let allowed_cert_names: Vec<String> = config
+            .cert_groups
+            .iter()
+            .filter(|(_, group_dn)| groups.iter().any(|g| g == *group_dn))
+            .map(|(cert_name, _)| cert_name.clone())
+            .collect();
+        UserInfo {
+            username: "testuser".into(),
+            email: None,
+            display_name: None,
+            groups,
+            is_admin,
+            allowed_cert_names,
+        }
+    }
+
+    fn config_with_cert_groups() -> SignConfig {
+        let mut config = SignConfig::default();
+        config.ldap.enabled = true;
+        config.ldap.cert_groups = [("server".into(), "cn=server-signers".into())]
+            .into_iter()
+            .collect();
+        config
+    }
+
+    #[test]
+    fn cert_auth_no_ldap_allows_all() {
+        let config = SignConfig::default();
+        assert!(check_cert_authorization(None, "server", &config).is_ok());
+    }
+
+    #[test]
+    fn cert_auth_no_cert_groups_allows_all() {
+        let mut config = SignConfig::default();
+        config.ldap.enabled = true;
+        let user = make_user(vec![], false);
+        assert!(check_cert_authorization(Some(&user), "server", &config).is_ok());
+    }
+
+    #[test]
+    fn cert_auth_admin_bypasses_groups() {
+        let config = config_with_cert_groups();
+        let user = make_user(vec![], true);
+        assert!(check_cert_authorization(Some(&user), "server", &config).is_ok());
+    }
+
+    #[test]
+    fn cert_auth_user_in_group_allowed() {
+        let config = config_with_cert_groups();
+        let user = make_user(vec!["cn=server-signers".into()], false);
+        assert!(check_cert_authorization(Some(&user), "server", &config).is_ok());
+    }
+
+    #[test]
+    fn cert_auth_user_not_in_group_denied() {
+        let config = config_with_cert_groups();
+        let user = make_user(vec!["cn=other-group".into()], false);
+        assert!(check_cert_authorization(Some(&user), "server", &config).is_err());
+    }
+
+    #[test]
+    fn cert_auth_unmapped_cert_allowed() {
+        let config = config_with_cert_groups();
+        let user = make_user(vec![], false);
+        // "desktop" has no group mapping, so anyone can use it
+        assert!(check_cert_authorization(Some(&user), "desktop", &config).is_ok());
+    }
+
+    #[test]
+    fn cert_auth_no_user_with_ldap_denied() {
+        let config = config_with_cert_groups();
+        assert!(check_cert_authorization(None, "server", &config).is_err());
+    }
 }

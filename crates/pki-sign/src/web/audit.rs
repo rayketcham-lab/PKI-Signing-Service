@@ -36,6 +36,15 @@ pub struct AuditEntry {
     pub status: String,
     /// Human-readable error message on failure.
     pub error_message: Option<String>,
+    /// Certificate type used for signing (e.g., "desktop", "server").
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cert_type: Option<String>,
+    /// Output filename with `signed_` prefix.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub signed_filename: Option<String>,
+    /// Signing file type (e.g., "Authenticode", "Detached CMS", "PowerShell").
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub file_type: Option<String>,
 }
 
 /// Append-only, thread-safe JSON-lines audit logger.
@@ -62,13 +71,37 @@ impl AuditLogger {
 
     /// Serialize `entry` as a single JSON line and flush to disk.
     ///
-    /// Errors during serialization or I/O are silently ignored to avoid
-    /// disrupting the signing pipeline for a logging failure.
+    /// Errors during serialization or I/O are logged via tracing to avoid
+    /// disrupting the signing pipeline for a logging failure, while ensuring
+    /// audit failures are never silently lost.
     pub fn log(&self, entry: &AuditEntry) {
-        if let Ok(json) = serde_json::to_string(entry) {
-            if let Ok(mut f) = self.file.lock() {
-                let _ = writeln!(f, "{json}");
-                let _ = f.flush();
+        let json = match serde_json::to_string(entry) {
+            Ok(j) => j,
+            Err(e) => {
+                tracing::error!(error = %e, action = %entry.action, "Failed to serialize audit entry");
+                return;
+            }
+        };
+        match self.file.lock() {
+            Ok(mut f) => {
+                if let Err(e) = writeln!(f, "{json}") {
+                    tracing::error!(
+                        error = %e,
+                        action = %entry.action,
+                        path = %self.path.display(),
+                        "Failed to write audit log entry"
+                    );
+                }
+                if let Err(e) = f.flush() {
+                    tracing::error!(
+                        error = %e,
+                        path = %self.path.display(),
+                        "Failed to flush audit log"
+                    );
+                }
+            }
+            Err(e) => {
+                tracing::error!(error = %e, "Audit logger mutex poisoned");
             }
         }
     }

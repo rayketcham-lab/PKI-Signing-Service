@@ -7,6 +7,7 @@
 //!
 //! - `POST /api/v1/sign` — Upload and sign file (multipart)
 //! - `POST /api/v1/sign-detached` — Create detached CMS signature
+//! - `POST /api/v1/sign-batch` — Sign multiple files, return ZIP archive
 //! - `POST /api/v1/verify` — Upload and verify file signature
 //! - `POST /api/v1/verify-detached` — Verify a detached signature
 //! - `GET /api/v1/status` — Server status and statistics
@@ -27,7 +28,7 @@ pub mod audit;
 pub mod gh_issues;
 mod handlers;
 pub mod ldap;
-mod middleware;
+pub(crate) mod middleware;
 
 pub use audit::AuditLogger;
 
@@ -39,6 +40,7 @@ use axum::extract::DefaultBodyLimit;
 use axum::routing::{get, post};
 use axum::{middleware as axum_middleware, Router};
 use tokio::sync::RwLock;
+use tower_http::services::ServeDir;
 use tower_http::trace::TraceLayer;
 use tracing::info;
 
@@ -85,6 +87,32 @@ impl Default for SigningStats {
     }
 }
 
+/// Determine the path to the static files directory.
+///
+/// Checks in order:
+/// 1. `PKI_SIGN_STATIC_DIR` environment variable
+/// 2. Development path (`crates/pki-sign/static`)
+/// 3. Installed path (next to binary)
+/// 4. Fallback (`static`)
+fn static_dir() -> std::path::PathBuf {
+    if let Ok(dir) = std::env::var("PKI_SIGN_STATIC_DIR") {
+        return std::path::PathBuf::from(dir);
+    }
+    let dev_path = std::path::PathBuf::from("crates/pki-sign/static");
+    if dev_path.exists() {
+        return dev_path;
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(parent) = exe.parent() {
+            let installed = parent.join("static");
+            if installed.exists() {
+                return installed;
+            }
+        }
+    }
+    std::path::PathBuf::from("static")
+}
+
 /// Build the axum router with all routes.
 pub fn build_router(state: Arc<AppState>) -> Router {
     // Admin routes — protected by bearer token auth or LDAP admin group
@@ -107,6 +135,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
     let api_router = Router::new()
         .route("/api/v1/sign", post(handlers::sign_file))
         .route("/api/v1/sign-detached", post(handlers::sign_detached))
+        .route("/api/v1/sign-batch", post(handlers::sign_batch))
         .route("/api/v1/verify", post(handlers::verify_file))
         .route("/api/v1/verify-detached", post(handlers::verify_detached))
         .route("/api/v1/status", get(handlers::server_status))
@@ -127,6 +156,13 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .merge(api_router)
         // Admin routes
         .merge(admin_router)
+        // Serve static files (web UI)
+        .nest_service("/static", ServeDir::new(static_dir()))
+        // Redirect root to the sign page
+        .route(
+            "/",
+            get(|| async { axum::response::Redirect::permanent("/static/index.html") }),
+        )
         // Catch-all
         .fallback(handlers::fallback)
         // Layers (applied bottom-up: trace first, then security headers, then body limit)
@@ -151,22 +187,37 @@ pub async fn run_server(config: SignConfig) -> Result<(), Box<dyn std::error::Er
     let bind_addr = format!("{}:{}", config.bind_addr, config.bind_port);
     let use_tls = tls_cert_path.is_some() && tls_key_path.is_some();
 
-    // 3. Load signing credentials
+    // 3. Load signing credentials (gracefully skip unsupported key types)
     let mut credentials = Vec::new();
     for cert_config in &config.cert_configs {
-        let password = std::env::var(&cert_config.pfx_password_env).map_err(|_| {
-            SignError::Config(format!(
-                "Environment variable '{}' not set for certificate '{}'",
-                cert_config.pfx_password_env, cert_config.name
-            ))
-        })?;
-        let cred = SigningCredentials::from_pfx(&cert_config.pfx_path, &password)?;
-        info!(
-            cert = %cert_config.name,
-            pfx = %cert_config.pfx_path.display(),
-            "Loaded signing certificate"
-        );
-        credentials.push((cert_config.name.clone(), cred));
+        let password = match std::env::var(&cert_config.pfx_password_env) {
+            Ok(p) => p,
+            Err(_) => {
+                tracing::warn!(
+                    cert = %cert_config.name,
+                    env = %cert_config.pfx_password_env,
+                    "Skipping certificate: password env var not set"
+                );
+                continue;
+            }
+        };
+        match SigningCredentials::from_pfx(&cert_config.pfx_path, &password) {
+            Ok(cred) => {
+                info!(
+                    cert = %cert_config.name,
+                    pfx = %cert_config.pfx_path.display(),
+                    "Loaded signing certificate"
+                );
+                credentials.push((cert_config.name.clone(), cred));
+            }
+            Err(e) => {
+                tracing::warn!(
+                    cert = %cert_config.name,
+                    error = %e,
+                    "Skipping certificate: failed to load"
+                );
+            }
+        }
     }
 
     if credentials.is_empty() {
@@ -224,12 +275,16 @@ pub async fn run_server(config: SignConfig) -> Result<(), Box<dyn std::error::Er
         let tls_config =
             axum_server::tls_rustls::RustlsConfig::from_pem_file(&cert_path, &key_path).await?;
         axum_server::bind_rustls(socket_addr, tls_config)
-            .serve(router.into_make_service())
+            .serve(router.into_make_service_with_connect_info::<std::net::SocketAddr>())
             .await?;
     } else {
         info!(%socket_addr, tls = false, "Starting HTTP server");
         let listener = tokio::net::TcpListener::bind(socket_addr).await?;
-        axum::serve(listener, router).await?;
+        axum::serve(
+            listener,
+            router.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+        )
+        .await?;
     }
 
     Ok(())

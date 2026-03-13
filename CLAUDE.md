@@ -1,8 +1,8 @@
-# PKI Signing Service -- Code Signing Engine
+# Code Signing Service -- Code Signing Engine
 
 Standalone code signing engine -- Authenticode, PKCS#7, RFC 3161 timestamping, detached CMS signing.
 
-**Version:** 0.3.0-beta.2 | **License:** MIT | **Date:** 2026-03-12
+**Version:** 0.5.0 | **License:** MIT | **Date:** 2026-03-12
 
 ## MANDATORY Rules
 ### Bash Commands: NO CHAINING (CRITICAL)

@@ -1,0 +1,124 @@
+# Test configuration with all cert type / algorithm combinations.
+# Run gen-test-certs.sh first to create the PFX files.
+#
+# 3 cert types × 5 algorithms = 15 certificates
+# Users see only the certs their LDAP group grants access to (via cert_groups).
+
+bind_addr = "0.0.0.0"
+bind_port = 8443
+dev_mode = true
+audit_log = "/tmp/pki-sign/audit.log"
+output_dir = "/tmp/pki-sign/signed"
+
+# ── Desktop Code Signing ──────────────────────────────────────────────
+
+[[cert_configs]]
+name = "desktop_rsa2048"
+pfx_path = "/tmp/pki-sign/certs/desktop_rsa2048.pfx"
+pfx_password_env = "PFX_TEST_PASS"
+
+[[cert_configs]]
+name = "desktop_rsa3072"
+pfx_path = "/tmp/pki-sign/certs/desktop_rsa3072.pfx"
+pfx_password_env = "PFX_TEST_PASS"
+
+[[cert_configs]]
+name = "desktop_rsa4096"
+pfx_path = "/tmp/pki-sign/certs/desktop_rsa4096.pfx"
+pfx_password_env = "PFX_TEST_PASS"
+
+[[cert_configs]]
+name = "desktop_p256"
+pfx_path = "/tmp/pki-sign/certs/desktop_p256.pfx"
+pfx_password_env = "PFX_TEST_PASS"
+
+[[cert_configs]]
+name = "desktop_p384"
+pfx_path = "/tmp/pki-sign/certs/desktop_p384.pfx"
+pfx_password_env = "PFX_TEST_PASS"
+
+# ── Server Code Signing ───────────────────────────────────────────────
+
+[[cert_configs]]
+name = "server_rsa2048"
+pfx_path = "/tmp/pki-sign/certs/server_rsa2048.pfx"
+pfx_password_env = "PFX_TEST_PASS"
+
+[[cert_configs]]
+name = "server_rsa3072"
+pfx_path = "/tmp/pki-sign/certs/server_rsa3072.pfx"
+pfx_password_env = "PFX_TEST_PASS"
+
+[[cert_configs]]
+name = "server_rsa4096"
+pfx_path = "/tmp/pki-sign/certs/server_rsa4096.pfx"
+pfx_password_env = "PFX_TEST_PASS"
+
+[[cert_configs]]
+name = "server_p256"
+pfx_path = "/tmp/pki-sign/certs/server_p256.pfx"
+pfx_password_env = "PFX_TEST_PASS"
+
+[[cert_configs]]
+name = "server_p384"
+pfx_path = "/tmp/pki-sign/certs/server_p384.pfx"
+pfx_password_env = "PFX_TEST_PASS"
+
+# ── Multipurpose Signing ──────────────────────────────────────────────
+
+[[cert_configs]]
+name = "multipurpose_rsa2048"
+pfx_path = "/tmp/pki-sign/certs/multipurpose_rsa2048.pfx"
+pfx_password_env = "PFX_TEST_PASS"
+
+[[cert_configs]]
+name = "multipurpose_rsa3072"
+pfx_path = "/tmp/pki-sign/certs/multipurpose_rsa3072.pfx"
+pfx_password_env = "PFX_TEST_PASS"
+
+[[cert_configs]]
+name = "multipurpose_rsa4096"
+pfx_path = "/tmp/pki-sign/certs/multipurpose_rsa4096.pfx"
+pfx_password_env = "PFX_TEST_PASS"
+
+[[cert_configs]]
+name = "multipurpose_p256"
+pfx_path = "/tmp/pki-sign/certs/multipurpose_p256.pfx"
+pfx_password_env = "PFX_TEST_PASS"
+
+[[cert_configs]]
+name = "multipurpose_p384"
+pfx_path = "/tmp/pki-sign/certs/multipurpose_p384.pfx"
+pfx_password_env = "PFX_TEST_PASS"
+
+[tsa]
+urls = []
+timeout_secs = 10
+
+[github]
+enabled = false
+
+# ── LDAP cert group mapping (example) ─────────────────────────────────
+# In production, uncomment and set real group DNs.
+# Users only see certs whose group they belong to.
+#
+# [ldap]
+# enabled = true
+# admin_group = "CN=PKI-Admins,OU=Groups,DC=example,DC=com"
+#
+# [ldap.cert_groups]
+# desktop_rsa2048     = "CN=Desktop-Signers,OU=Groups,DC=example,DC=com"
+# desktop_rsa3072     = "CN=Desktop-Signers,OU=Groups,DC=example,DC=com"
+# desktop_rsa4096     = "CN=Desktop-Signers,OU=Groups,DC=example,DC=com"
+# desktop_p256        = "CN=Desktop-Signers,OU=Groups,DC=example,DC=com"
+# desktop_p384        = "CN=Desktop-Signers,OU=Groups,DC=example,DC=com"
+# server_rsa2048      = "CN=Server-Signers,OU=Groups,DC=example,DC=com"
+# server_rsa3072      = "CN=Server-Signers,OU=Groups,DC=example,DC=com"
+# server_rsa4096      = "CN=Server-Signers,OU=Groups,DC=example,DC=com"
+# server_p256         = "CN=Server-Signers,OU=Groups,DC=example,DC=com"
+# server_p384         = "CN=Server-Signers,OU=Groups,DC=example,DC=com"
+# multipurpose_rsa2048 = "CN=Multi-Signers,OU=Groups,DC=example,DC=com"
+# multipurpose_rsa3072 = "CN=Multi-Signers,OU=Groups,DC=example,DC=com"
+# multipurpose_rsa4096 = "CN=Multi-Signers,OU=Groups,DC=example,DC=com"
+# multipurpose_p256    = "CN=Multi-Signers,OU=Groups,DC=example,DC=com"
+# multipurpose_p384    = "CN=Multi-Signers,OU=Groups,DC=example,DC=com"

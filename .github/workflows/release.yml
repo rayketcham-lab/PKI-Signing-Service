@@ -1,0 +1,126 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag (e.g., v0.3.0)'
+        required: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build-linux:
+    name: Build Linux (glibc + musl)
+    runs-on: [self-hosted, Linux]
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4.3.1
+      - uses: dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7  # stable
+        with:
+          targets: x86_64-unknown-linux-musl
+      - uses: Swatinem/rust-cache@401aff9a7a08acb9d27b64936a90db81024cff97  # v2.8.2
+        with:
+          prefix-key: "v0-rust-${{ runner.name }}"
+      - name: Install musl toolchain
+        run: |
+          if ! command -v musl-gcc > /dev/null 2>&1; then
+            if command -v apt-get > /dev/null 2>&1; then
+              sudo apt-get update
+              sudo apt-get install -y musl-tools
+            fi
+          fi
+      - name: Build glibc binary
+        run: cargo build --release
+      - name: Build musl static binary
+        run: cargo build --release --target x86_64-unknown-linux-musl
+      - name: Package Linux artifacts
+        run: |
+          mkdir -p dist
+          cp target/release/pki-sign dist/pki-sign-linux-x86_64
+          cp target/x86_64-unknown-linux-musl/release/pki-sign dist/pki-sign-linux-x86_64-static
+          chmod +x dist/pki-sign-linux-x86_64
+          chmod +x dist/pki-sign-linux-x86_64-static
+      - name: Generate checksums
+        run: |
+          cd dist
+          sha256sum pki-sign-linux-x86_64 > pki-sign-linux-x86_64.sha256
+          sha256sum pki-sign-linux-x86_64-static > pki-sign-linux-x86_64-static.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-binaries
+          path: dist/
+
+  build-windows:
+    name: Build Windows
+    runs-on: [self-hosted, Windows]
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4.3.1
+      - name: Setup Rust
+        shell: powershell
+        run: |
+          if (-not (Get-Command rustup -ErrorAction SilentlyContinue)) {
+            Invoke-WebRequest -Uri https://win.rustup.rs/x86_64 -OutFile rustup-init.exe
+            .\rustup-init.exe -y --default-toolchain stable
+            Remove-Item rustup-init.exe
+            $env:PATH = "$env:USERPROFILE\.cargo\bin;$env:PATH"
+            [Environment]::SetEnvironmentVariable("PATH", "$env:USERPROFILE\.cargo\bin;$([Environment]::GetEnvironmentVariable('PATH', 'User'))", "User")
+          }
+          rustup default stable
+          rustup update stable
+          echo "$env:USERPROFILE\.cargo\bin" | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
+      - uses: Swatinem/rust-cache@401aff9a7a08acb9d27b64936a90db81024cff97  # v2.8.2
+        with:
+          prefix-key: "v0-rust-${{ runner.name }}"
+      - name: Build release
+        shell: powershell
+        run: cargo build --release
+      - name: Package Windows artifact
+        shell: powershell
+        run: |
+          New-Item -ItemType Directory -Force -Path dist
+          Copy-Item target\release\pki-sign.exe dist\pki-sign-windows-x86_64.exe
+          $hash = (Get-FileHash dist\pki-sign-windows-x86_64.exe -Algorithm SHA256).Hash
+          "$hash  pki-sign-windows-x86_64.exe" | Out-File -Encoding utf8 dist\pki-sign-windows-x86_64.exe.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-binaries
+          path: dist/
+
+  release:
+    name: Create GitHub Release
+    needs: [build-linux, build-windows]
+    runs-on: [self-hosted, Linux]
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4.3.1
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts/
+      - name: Determine tag
+        id: tag
+        env:
+          INPUT_TAG: ${{ github.event.inputs.tag }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          if [ -n "$INPUT_TAG" ]; then
+            echo "tag=$INPUT_TAG" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=$REF_NAME" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          gh release create "$TAG" \
+            --title "Code Signing Service $TAG" \
+            --generate-notes \
+            artifacts/linux-binaries/* \
+            artifacts/windows-binaries/*

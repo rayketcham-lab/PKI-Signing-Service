@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Administration — Code Signing Service</title>
+<link rel="stylesheet" href="/static/pki_styles.css">
+</head>
+<body>
+<div class="portal-wrapper">
+<div class="portal-header-bar">
+    <a href="/static/index.html">
+    <img src="data:image/png;base64,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d6nvANQjYAIAIOnUaj8GFV0KLWJ/J1FtF/vbpb4DUI+ACQCApFMr/RhSdCWsiP2dZLVd7G9X+g1APQImAACSTq30Y0jRlbAi9neS1Xaxv13pNwD1CJgAAEg6s9KPAUVXworY12lUm8W+dqXfANQjYAIAIOnMKj+GE10IKWJfp1ltFvvahT4D3fcLv/ALfd87o+r3fu/3qv/7v/+LzTCGgAkAgKQzq/y4EFiqNos9nWa1WexrF/oMdJ+AaTYETAAAJJ1Z5ceFwFK1WezrNKvNYl+70OcSjz76aHXttddWf/M3f1Mde+yx1W//9m9Xz3/+86vtttuu2nzzzatVq1ZVP/uzP1utv/76vf8//dnOO+9c/cqv/Ep1yCGHVKtXr67OPffc6pprrqkefPDB2DxQk4BpNgRMAAAknVjlx0XA8mqr2M9ZVFvFfnahz03dcMMN1emnn1699KUvrVauXNk3ztxKQdRznvOc6u1vf3t1xRVXVA8//HD8aGAIAdNstDFg+uu//uve92fcx5OoNN4NN9yw98uB3Xbbrdp3332rI488sjrttNOqNWvWTO17Ov3SYvlc163vfve7Ezmu77nnnt4vQn7mZ36m7zPqVPq37I477ojN/kTu+P793/99IuMDAMp1YoUfTyaWqs1iX2dRbRb72oU+j/PYY49VF110UfXiF784+4S7aW2wwQbVAQccUP3d3/1d70opYDgB02wsWsA0rtL39Cte8YrqggsuqB566KHYtWy5AcwkAqa77rqret7znpf9b93ee+/da2OU3PEJmACgPTqxwo8nE0vVZrGvs6g2i33tQp+HSQuo888/v9phhx36xjPLSr89P+6443qLB6CfgGk2BEzDa4sttqhOPvnkidzunBvAlAZMt99+e/XMZz4zO1zaZ599qnvvvTc22yd3fAImAGiPTqzw48nEUrVZ7Ossqs1iX7vQ50HSs5X23HPPvnHMs3baaScn1zCAgGk2BEzja9ttt60uu+yyouMrN4ApCZhuu+22avfdd88Ol9IVvmvXro3NDpQ7PgETALRHJ1b48WRiqdos9nUW1Waxr13o83L/+7//W5144onVeuut1zeGeZeACQYTMM2GgKlepZDmne98Z+/fkxy5AUxuwHTLLbdUu+66a3a4lJ5J2OTKrdzxCZgAoD06scKPJxNL1Waxr7OoNot97UKflzzwwAPVQQcd1Nf3tpSACQYTMM2GgKlZHX300VkhU24AkxMwff/736+e/vSnZ4dL6RlUP/zhD2OzI+WOT8AEAO3R+hV+PJFYqraL/Z1FtV3sbxf6nd6a86xnPauvz20qARMMJmCaDQFT8zrppJMah0y5AUzTgCm9FTU9YzA3XDr44IOz3qSXOz4BEwC0R7tX9x0NJZbEPk+zuiD2ue19v//++3tvzYn9bVsJmGAwAdNsCJiaV+rbmjVrGh1vuQFMk4Dpe9/7XrXddtv1tVG3DjnkkOqRRx6JzdaSOz4BEwC0R3tX9/9fPJFYqi6IfZ5mdUHsc5v7nn6z/JKXvKSvr20sARMwTwKmvPrlX/7l6rHHHotdHyo3gKkbMH3729+utt56677t69brXve66tFHH43N1pY7PgETALTHTFb3y08EmoonErntzEPs8zSrC2Kfc/tesm1d7773u/v6mVsrVqyo9t9//95Dwv/xH/+x+ta3vlXddddd1UMPPdQLstJzKu68887en6e3DJ122mnVG97whmqXXXbpa2tQCZiAeRIw5dfHPvax2t/fuQFMnYDpG9/4RvXkJz+5b9u6dfjhhzcKywbJHZ+ACQDaY3or9BGBQqq64nZNt5+32O9pVFfEfjftf9wup406rr766uxnTyyvnXfeufrgBz/Yu9Uu1w9+8IPq/PPPrw488MBqgw026PuMVAImYJ7WpYAp3SI27Ps0/Xn6Pr/xxhurT33qU9Ub3/jGxrdhxtpvv/1qz1luADMuYPr6179ebb755n3b1a1jjjmm+tGPfhSbbSx3fAImAGiPya7Mg3gSsLzqits13b4NYt8nWV0S+950DHG7nDbGSSf6e+65Z1/7Ternf/7nq3POOWciJ9zL3XvvvdXZZ59dPeMZz/ipzxMwAfO0KAHTIHfccUf16le/OvuXEqmPt912W2x2oNwAZlTAdM0111Sbbrpp3zZ16y1vecvE9nnu+ARMANAek1uZB/EEYFDVEbdpsm1bxL5Pskok9r3JGOI2g2oSPvShD/W126R23XXX6vrrr4/NTtzll19evehFL+p95iwCpltuuaX6+Mc/Xq1evbp3NdUzn/nM3u0U6bf36623XrX++utXG2+8cfW0pz2t168jjzyyN5fpmR5dkq4YO/fcc6vXvva11e67717tuOOO1SabbPKT/bHVVltVz33uc6trr702btpKaV/885//c3XmmWdWRxxxRO/KlfR9sdlmm1Ubbrhhb+G9cuXK3jG37bbb9l4gkIKJt73tbdUFF1zQ6kX0IgdMSTqODj300Ozbni+++OJan5kbwAwLmNJDxtP3RPz5unXcccdNdH/njk/ABADt0e4V/wjxBGN5dU3sv7HMT1q8x343qXQrzL333hubbWxaAVN6G9rGG2/ct+2o2muvvVp78t71gGld2x/TCHRKTKMd+2L6ujxPg+rggw+u/f2dG8AMC5iSdByl76im32/LK12hd9lllw39jLpyxydgAoD26Maqf4B4grG8uib231jm57HHHqt23XXXvr43qe233773G90S0wqYkhR8xG3HVVo8TFO6XeP9739/dc4558T/NFLXA6bk9a9/fd+242oW++Mv/uIvevujzhiWTCPQKTGt/hx11FGNj4dU++yzT29Bv64ZFDDdddddcz/+cqVj4Z//+Z97+yrn+KobwIwKmC644ILGx3qq9Iu2e++9d+Tn1JE7PgETALRHN1b9Q8STjOXVJbHvxjFfV1xxRV//cyrdMve5z30u6+G+6XlOTRewdQOmL37xi33bjqsdd9yxuvPOO2NTxdIbjU4//fTqqU99au9zTj755PgjI60LAVPaH03bnub+OOOMM6ptttmm9zlpf9QZw5JpBTq5ptWfa665Jvsxnh6uXPo8pvQGr9e+9rVZ3y3TIGCaDQHTj6tpwJSk740///M/z5rHpUp9/fCHP1z7OM0dn4AJANqjW6v/IJ5kLC9mL+6DLu+Pt771rX1jyK0nP/nJ1eGHH16de+65vWfu3HLLLY+fUN/3SHrFfXpmx0033VRdffXV1Yc+9KHez2655ZZ97YyrugFT8uxnP7tv+3GVtrnzzjtj07ncf//9vcX0Zptt9lOfMU8CprI2piX2r4sGBUy77bbbnI+/yVV6Flt6jlR6qH+qJsdr3QBmVMB09NFHN7pSMlX6RcV9990Xm60td3wCJgBoj+6t/IN4orG8mJ04912e/3Rlwt57790b56wq/fY8PfC3bkhdxw9+8IPeA8PTbULDFuaLGjCl/dG0/VRpf1xwwQW947OpWe6PF77whUM/W8A03Fe+8pVqvfXW62ujSW2yySbVWWedVV1++eXV2rVre8dauhIu/e/07Kv05+k14enNguutt97YY6/tAROPq3ss5QYw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" alt="Code Signing Service" height="90">
+    </a>
+</div>
+<div class="portal-menubar">
+    <div>Code Signing Service</div>
+    <div>Administration</div>
+</div>
+
+<div class="portal-body">
+<div class="portal-sidebar">
+    <h3>Navigation</h3>
+    <ul>
+        <li><a href="/static/index.html">Sign Files</a></li>
+        <li><a href="/static/verify.html">Verify Signature</a></li>
+        <li><a href="/static/admin.html"><strong>Administration</strong></a></li>
+    </ul>
+    <h3>API Endpoints</h3>
+    <ul>
+        <li><a href="/api/v1/health">Health Check</a></li>
+        <li><a href="/api/v1/status">Server Status</a></li>
+        <li><a href="/api/v1/certificate">Certificates</a></li>
+    </ul>
+    <h3>Information</h3>
+    <ul>
+        <li>Authenticode Signing</li>
+        <li>Detached CMS/PKCS#7</li>
+        <li>RFC 3161 Timestamping</li>
+    </ul>
+</div>
+
+<div class="portal-main">
+    <div class="container">
+        <div class="header">
+            <span class="header-title">Administration Dashboard</span>
+            <nav class="header-nav">
+                <a href="/static/index.html">Sign</a>
+                <a href="/static/verify.html">Verify</a>
+                <a href="/static/admin.html" class="active">Admin</a>
+            </nav>
+        </div>
+
+        <p style="color:#63666A;margin-bottom:16px;">
+            Server statistics, certificate management, and audit logs.
+        </p>
+
+        <!-- Server Statistics -->
+        <div class="card mb-2" id="stats-card">
+            <div class="card-header flex-between">
+                <span>Server Statistics</span>
+                <button class="btn btn-sm btn-secondary" id="refresh-stats-btn" type="button">Refresh</button>
+            </div>
+            <div class="card-body">
+                <div class="stats-grid" id="stats-grid">
+                    <div class="stat-item">
+                        <div class="stat-value" id="stat-uptime">--</div>
+                        <div class="stat-label">Uptime</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-value" id="stat-files-signed">--</div>
+                        <div class="stat-label">Files Signed</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-value" id="stat-files-verified">--</div>
+                        <div class="stat-label">Files Verified</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-value" id="stat-bytes-signed">--</div>
+                        <div class="stat-label">Bytes Signed</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-value" id="stat-sign-errors">--</div>
+                        <div class="stat-label">Sign Errors</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-value" id="stat-avg-duration">--</div>
+                        <div class="stat-label">Avg Duration</div>
+                    </div>
+                </div>
+                <div class="alert hidden mt-2" id="stats-error" role="alert"></div>
+            </div>
+        </div>
+
+        <!-- Loaded Certificates -->
+        <div class="card mb-2" id="certs-card">
+            <div class="card-header flex-between">
+                <span>Loaded Certificates</span>
+                <button class="btn btn-sm btn-secondary" id="reload-certs-btn" type="button">Reload</button>
+            </div>
+            <div class="card-body">
+                <p style="font-size:0.8rem;color:#63666A;margin-bottom:0.75rem;">Click a certificate row to view full details.</p>
+                <div class="table-wrap">
+                    <table class="table" id="certs-table" aria-label="Loaded signing certificates">
+                        <thead>
+                            <tr>
+                                <th scope="col">Name</th>
+                                <th scope="col">Subject</th>
+                                <th scope="col">Fingerprint (SHA-256)</th>
+                                <th scope="col">Status</th>
+                                <th scope="col">Action</th>
+                            </tr>
+                        </thead>
+                        <tbody id="certs-tbody">
+                            <tr><td colspan="5" class="text-center text-muted">Loading certificates...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+                <div class="alert hidden mt-2" id="certs-error" role="alert"></div>
+            </div>
+        </div>
+
+        <!-- Audit Log -->
+        <div class="card mb-2" id="audit-card">
+            <div class="card-header flex-between">
+                <span>Audit Log</span>
+                <button class="btn btn-sm btn-secondary" id="refresh-audit-btn" type="button">Refresh</button>
+            </div>
+            <div class="card-body">
+                <div class="table-wrap">
+                    <table class="table" id="audit-table" aria-label="Recent audit log entries">
+                        <thead>
+                            <tr>
+                                <th scope="col">Timestamp</th>
+                                <th scope="col">Action</th>
+                                <th scope="col">Filename</th>
+                                <th scope="col">Status</th>
+                                <th scope="col">Duration</th>
+                            </tr>
+                        </thead>
+                        <tbody id="audit-tbody">
+                            <tr><td colspan="5" class="text-center text-muted">Loading audit log...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+                <div class="alert hidden mt-2" id="audit-error" role="alert"></div>
+            </div>
+        </div>
+    </div>
+</div>
+</div>
+
+<!-- Certificate detail overlay -->
+<div class="cert-detail-overlay" id="cert-detail-overlay">
+    <div class="cert-detail-box">
+        <div class="cert-detail-header">
+            <span id="cert-detail-title">Certificate Details</span>
+            <button class="cert-detail-close" id="cert-detail-close" aria-label="Close">&times;</button>
+        </div>
+        <div class="cert-detail-body" id="cert-detail-body">
+            Loading...
+        </div>
+    </div>
+</div>
+
+<div class="portal-footer">
+    <div class="portal-footer-content">
+        Code Signing Service v<span id="footer-version">0.5.0</span>
+    </div>
+</div>
+</div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

@@ -68,7 +68,7 @@ highlight = "all"
 
 # List of crates to deny entirely
 deny = [
-    # OpenSSL is fully banned — PKI Signing Service uses rustls for all TLS
+    # OpenSSL is fully banned — Code Signing Service uses rustls for all TLS
     { name = "openssl" },
     { name = "openssl-sys" },
     { name = "native-tls" },

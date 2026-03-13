@@ -1189,7 +1189,7 @@ mod tests {
         let (ciphertext, alg_id) =
             encrypt_content(ContentEncryptionAlgorithm::Aes128Cbc, &cek, plaintext).unwrap();
 
-        assert_ne!(ciphertext, plaintext.as_ref());
+        assert_ne!(ciphertext, &plaintext[..]);
 
         let decrypted = decrypt_content(&alg_id, &cek, &ciphertext).unwrap();
         assert_eq!(decrypted.as_slice(), plaintext);

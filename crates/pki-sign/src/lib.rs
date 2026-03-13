@@ -39,10 +39,12 @@
 // Allow dead code during scaffolding phase — stubs will be implemented in Phases 2-4
 #![allow(dead_code, unused_imports, unused_variables)]
 
+pub mod cab;
 pub mod config;
 pub mod crypto;
 pub mod error;
 pub mod ers;
+pub mod msi;
 pub mod pe;
 pub mod pkcs7;
 pub mod powershell;

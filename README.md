@@ -1,6 +1,6 @@
-# PKI Signing Service
+# Code Signing Service
 
-![Version](https://img.shields.io/badge/version-0.3.0--beta.2-blue) ![License](https://img.shields.io/badge/license-MIT-green) ![Language](https://img.shields.io/badge/language-Rust-orange) ![Dependencies](https://img.shields.io/badge/openssl-none-brightgreen) ![CI](https://img.shields.io/github/actions/workflow/status/rayketcham-lab/PKI-Signing-Service/ci.yml?branch=main&label=CI)
+![Version](https://img.shields.io/badge/version-0.5.0-blue) ![License](https://img.shields.io/badge/license-MIT-green) ![Language](https://img.shields.io/badge/language-Rust-orange) ![Dependencies](https://img.shields.io/badge/openssl-none-brightgreen) ![CI](https://img.shields.io/github/actions/workflow/status/rayketcham-lab/PKI-Signing-Service/ci.yml?branch=main&label=CI)
 
 Pure Rust code signing engine. Authenticode for Windows PE executables, detached CMS/PKCS#7, PowerShell scripts, RFC 3161 timestamping.
 
@@ -306,8 +306,8 @@ Compatible with any RFC 3161 client --- `signtool.exe`, `openssl ts`, or this to
 ## CLI Reference
 
 ```
-pki-sign 0.3.0-beta.2
-PKI Signing Service - Pure Rust Code Signing Engine
+pki-sign 0.5.0
+Code Signing Service - Pure Rust Code Signing Engine
 
 USAGE:
     pki-sign <COMMAND>
@@ -436,7 +436,7 @@ cargo fmt --all --check
 ```ini
 # /etc/systemd/system/pki-sign.service
 [Unit]
-Description=PKI Signing Service
+Description=Code Signing Service
 After=network.target
 
 [Service]

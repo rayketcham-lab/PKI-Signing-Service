@@ -1,0 +1,23 @@
+name: Cross-Repo CI Trigger
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  trigger-downstream:
+    name: Trigger downstream tests
+    runs-on: [self-hosted, Linux]
+    timeout-minutes: 5
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - name: Trigger spork-tests CI
+        env:
+          GH_TOKEN: ${{ secrets.CROSS_REPO_TOKEN }}
+        run: |
+          if [ -n "$GH_TOKEN" ]; then
+            gh workflow run ci.yml --repo rayketcham-lab/spork-tests --ref main || echo "WARN: Could not trigger spork-tests CI (check CROSS_REPO_TOKEN permissions)"
+          else
+            echo "SKIP: CROSS_REPO_TOKEN not configured"
+          fi
