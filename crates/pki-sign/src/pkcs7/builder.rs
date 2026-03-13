@@ -605,28 +605,41 @@ impl Pkcs7Builder {
         // Step 1: Extract issuer and serial from signer certificate
         let (issuer_der, serial_der) = extract_issuer_and_serial(&self.signer_cert_der)?;
 
-        // Step 2: Build signed attributes
+        // Step 2: Build SpcIndirectDataContent upfront (Authenticode only) so we
+        // can compute its hash for the messageDigest signed attribute.
+        // Per MS Authenticode spec, messageDigest = hash(eContent), where
+        // eContent is the DER-encoded SpcIndirectDataContent.
+        let spc_indirect_data = if !self.detached {
+            Some(build_spc_indirect_data(&self.image_hash))
+        } else {
+            None
+        };
+
+        // Step 3: Build signed attributes
         let attrs_content = if self.detached {
-            // Detached mode: contentType = id-data, no SPC structures
+            // Detached mode: contentType = id-data, messageDigest = hash of file
             build_detached_signed_attrs_content(&self.image_hash, self.signing_algorithm)
         } else {
-            // Authenticode mode: contentType = SPC_INDIRECT_DATA
+            // Authenticode mode: contentType = SPC_INDIRECT_DATA,
+            // messageDigest = SHA-256(SpcIndirectDataContent DER)
+            use sha2::Digest as _;
+            let spc_hash = sha2::Sha256::digest(spc_indirect_data.as_ref().unwrap());
             build_signed_attrs_content(
-                &self.image_hash,
+                &spc_hash,
                 self.signing_algorithm,
                 self.program_name.as_deref(),
                 self.program_url.as_deref(),
             )
         };
 
-        // Step 3: DER-encode as SET for signing (tag 0x31)
+        // Step 4: DER-encode as SET for signing (tag 0x31)
         let attrs_as_set = asn1::encode_set(&attrs_content);
 
-        // Step 4: Sign the DER-encoded SET
+        // Step 5: Sign the DER-encoded SET
         // Per RFC 5652 Section 5.4: sign the DER encoding of the signed attributes
         let signature_bytes = sign_fn(&attrs_as_set)?;
 
-        // Step 5: Build SignerInfo
+        // Step 6: Build SignerInfo
         let signer_info = build_signer_info(
             &issuer_der,
             &serial_der,
@@ -635,7 +648,7 @@ impl Pkcs7Builder {
             self.timestamp_token.as_deref(),
         );
 
-        // Step 6: Build certificates [0] IMPLICIT
+        // Step 7: Build certificates [0] IMPLICIT
         // Certificates are raw DER — do NOT double-wrap in SEQUENCE (Python bug #3)
         let mut certs_data = Vec::new();
         certs_data.extend_from_slice(&self.signer_cert_der);
@@ -644,12 +657,15 @@ impl Pkcs7Builder {
         }
         let certificates = asn1::encode_implicit_tag(0, &certs_data);
 
-        // Step 7: Build SignedData
+        // Step 8: Build SignedData
         let signed_data = if self.detached {
             build_detached_signed_data(&certificates, &signer_info)
         } else {
-            let spc_indirect = build_spc_indirect_data(&self.image_hash);
-            build_signed_data(&spc_indirect, &certificates, &signer_info)
+            build_signed_data(
+                spc_indirect_data.as_ref().unwrap(),
+                &certificates,
+                &signer_info,
+            )
         };
 
         // Step 8: Wrap in ContentInfo

@@ -20,11 +20,43 @@ use sha2::{Digest, Sha256};
 use crate::error::{SignError, SignResult};
 use crate::pkcs7::asn1;
 use crate::pkcs7::Pkcs7Builder;
-use crate::signer::{SigningCredentials, SigningResult};
+use crate::signer::{SignOptions, SigningCredentials, SigningResult};
 use crate::timestamp::TsaConfig;
 
 /// Marker for the start of a PowerShell signature block.
 const SIG_BEGIN: &str = "# SIG # Begin signature block";
+
+/// Normalize line endings to CRLF for Windows PowerShell Authenticode compatibility.
+///
+/// Windows' PowerShell SIP (`pwrshsip.dll`) expects CRLF line endings when
+/// computing the Authenticode digest.  We normalize LF → CRLF so that
+/// `Get-AuthenticodeSignature` can validate our signatures regardless of
+/// the source platform's line ending convention.
+pub(crate) fn normalize_crlf(content: &str) -> String {
+    // Replace lone LF with CRLF (avoid doubling existing CRLF)
+    let mut out = String::with_capacity(content.len());
+    let bytes = content.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'\n' && (i == 0 || bytes[i - 1] != b'\r') {
+            out.push_str("\r\n");
+        } else {
+            out.push(bytes[i] as char);
+        }
+        i += 1;
+    }
+    out
+}
+
+/// Hash script content as raw UTF-8 bytes for Windows PowerShell Authenticode.
+///
+/// Windows' SIP hashes the raw file bytes (after stripping the signature
+/// block and trimming trailing newlines).  Line endings must be CRLF.
+pub(crate) fn hash_script_bytes(content: &str) -> Vec<u8> {
+    let normalized = normalize_crlf(content);
+    let trimmed = normalized.trim_end_matches(['\r', '\n']);
+    Sha256::digest(trimmed.as_bytes()).to_vec()
+}
 
 /// Marker for the end of a PowerShell signature block.
 const SIG_END: &str = "# SIG # End signature block";
@@ -60,6 +92,7 @@ fn build_ps1_pkcs7(
     // but the content is the script hash rather than a PE image hash.
     let mut builder =
         Pkcs7Builder::new(credentials.signer_cert_der().to_vec(), script_hash.to_vec());
+    builder.with_algorithm(credentials.signing_algorithm());
 
     for chain_cert in credentials.chain_certs_der() {
         builder.add_chain_cert(chain_cert.clone());
@@ -106,6 +139,7 @@ pub async fn sign_ps1(
     output_path: &Path,
     credentials: &SigningCredentials,
     tsa_config: Option<&TsaConfig>,
+    options: &SignOptions,
 ) -> SignResult<SigningResult> {
     // Strip UTF-8 BOM (0xEF 0xBB 0xBF) if present — Windows editors commonly
     // add BOMs to .ps1 files, and they must be excluded from the hash computation
@@ -117,18 +151,31 @@ pub async fn sign_ps1(
     };
     let content = String::from_utf8_lossy(raw);
 
-    // Strip existing signature if present (for re-signing)
-    let script_content = if is_signed(&content) {
-        strip_signature(&content).to_string()
-    } else {
-        content.into_owned()
-    };
+    // Reject already-signed files unless allow_resign is set
+    if is_signed(&content) {
+        if !options.allow_resign {
+            return Err(SignError::AlreadySigned(
+                "PowerShell script already contains a signature block".into(),
+            ));
+        }
+        tracing::info!("Re-signing already-signed PowerShell script (allow_resign=true)");
+    }
+
+    // Strip existing signature if present (safe for unsigned files too).
+    let script_body = strip_signature(&content);
+
+    // Normalize to CRLF and trim trailing newlines — must match what
+    // Windows' SIP computes when verifying via Get-AuthenticodeSignature.
+    let script_content = normalize_crlf(script_body)
+        .trim_end_matches(['\r', '\n'])
+        .to_owned();
 
     // Compute original file hash for reporting
     let original_hash = hex::encode(Sha256::digest(data));
 
-    // Hash the script content (UTF-8 bytes)
-    let script_hash = Sha256::digest(script_content.as_bytes()).to_vec();
+    // Hash the raw UTF-8 bytes with CRLF line endings (Windows SIP compatibility).
+    // Windows' pwrshsip.dll hashes the raw file bytes, not a UTF-16LE conversion.
+    let script_hash = hash_script_bytes(&script_content);
 
     // Build the PKCS#7 signature
     let mut timestamp_token: Option<Vec<u8>> = None;

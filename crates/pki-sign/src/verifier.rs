@@ -218,9 +218,15 @@ fn verify_pe(data: &[u8], trusted_roots: &[Vec<u8>]) -> SignResult<VerifyResult>
     };
     let computed_hash = pe::compute_authenticode_hash_with(data, &pe_info, digest_alg)?;
     let computed_hex = hex::encode(&computed_hash);
-    let signed_hex = hex::encode(&cms_info.message_digest);
+    // For Authenticode, the file hash is inside SpcIndirectDataContent.DigestInfo,
+    // not in the messageDigest signed attribute (which is hash of the eContent).
+    let file_digest = cms_info
+        .spc_file_digest
+        .as_ref()
+        .unwrap_or(&cms_info.message_digest);
+    let signed_hex = hex::encode(file_digest);
 
-    let signature_valid = computed_hash == cms_info.message_digest;
+    let signature_valid = computed_hash == *file_digest;
 
     let chain_valid = if trusted_roots.is_empty() {
         true // No trust store provided — skip chain validation (backward compat)
@@ -277,12 +283,18 @@ fn verify_powershell(content: &str, trusted_roots: &[Vec<u8>]) -> SignResult<Ver
     // Parse the CMS SignedData
     let cms_info = parse_cms_signed_data(&pkcs7_der)?;
 
-    // Compute hash of the script content
-    let computed_hash = Sha256::digest(script_content.as_bytes()).to_vec();
+    // Compute hash of the script content as raw UTF-8 bytes with CRLF normalization
+    let computed_hash = crate::powershell::hash_script_bytes(script_content);
     let computed_hex = hex::encode(&computed_hash);
-    let signed_hex = hex::encode(&cms_info.message_digest);
+    // For Authenticode, the file hash is inside SpcIndirectDataContent.DigestInfo,
+    // not in the messageDigest signed attribute (which is hash of the eContent).
+    let file_digest = cms_info
+        .spc_file_digest
+        .as_ref()
+        .unwrap_or(&cms_info.message_digest);
+    let signed_hex = hex::encode(file_digest);
 
-    let signature_valid = computed_hash == cms_info.message_digest;
+    let signature_valid = computed_hash == *file_digest;
 
     let chain_valid = if trusted_roots.is_empty() {
         true // No trust store provided — skip chain validation (backward compat)
@@ -628,7 +640,12 @@ fn extract_subject_der(cert_der: &[u8]) -> Option<Vec<u8>> {
 #[derive(Debug)]
 struct CmsInfo {
     /// The message digest from signed attributes.
+    /// For Authenticode, this is the hash of the SpcIndirectDataContent DER.
+    /// For detached CMS, this is the hash of the file content.
     message_digest: Vec<u8>,
+    /// The file/image digest extracted from SpcIndirectDataContent.DigestInfo.
+    /// Only present for Authenticode signatures (SPC_INDIRECT_DATA content type).
+    spc_file_digest: Option<Vec<u8>>,
     /// Signer certificate subject (CN or full DN).
     signer_subject: String,
     /// Signer certificate issuer (CN or full DN).
@@ -722,6 +739,10 @@ fn parse_cms_signed_data(pkcs7_der: &[u8]) -> SignResult<CmsInfo> {
         .map_err(|e| SignError::Pkcs7(format!("Failed to extract encapContentInfo: {e}")))?;
     let encap_content_type = extract_encap_content_type(encap_ci_tlv);
     let encap_ct_oid_tlv = extract_encap_content_type_oid_tlv(encap_ci_tlv);
+
+    // For Authenticode (SPC_INDIRECT_DATA), extract the file digest from eContent.
+    // eContent is inside [0] EXPLICIT after the OID in encapContentInfo.
+    let spc_file_digest = extract_spc_file_digest_from_encap(encap_ci_tlv);
 
     // certificates [0] IMPLICIT — extract certs for signer info and chain validation
     let (cert_tag, cert_content) = asn1::parse_tlv(remaining)
@@ -952,6 +973,7 @@ fn parse_cms_signed_data(pkcs7_der: &[u8]) -> SignResult<CmsInfo> {
 
     Ok(CmsInfo {
         message_digest,
+        spc_file_digest,
         signer_subject,
         signer_issuer,
         signature_algorithm,
@@ -2043,6 +2065,64 @@ fn extract_encap_content_type_oid_tlv(encap_ci_tlv: &[u8]) -> Option<Vec<u8>> {
         Ok((tlv, _)) if !tlv.is_empty() && tlv[0] == 0x06 => Some(tlv.to_vec()),
         _ => None,
     }
+}
+
+/// Extract the file/image digest from SpcIndirectDataContent inside encapContentInfo.
+///
+/// The structure is:
+/// ```text
+/// encapContentInfo SEQUENCE {
+///   eContentType  OID (SPC_INDIRECT_DATA),
+///   eContent      [0] EXPLICIT {
+///     SpcIndirectDataContent SEQUENCE {
+///       SpcAttributeTypeAndOptionalValue SEQUENCE { ... },
+///       DigestInfo SEQUENCE {
+///         AlgorithmIdentifier SEQUENCE { ... },
+///         digest OCTET STRING
+///       }
+///     }
+///   }
+/// }
+/// ```
+///
+/// Returns the digest OCTET STRING value from DigestInfo, or None if parsing fails.
+fn extract_spc_file_digest_from_encap(encap_ci_tlv: &[u8]) -> Option<Vec<u8>> {
+    // Parse outer SEQUENCE (encapContentInfo)
+    let (_, inner) = asn1::parse_tlv(encap_ci_tlv).ok()?;
+
+    // Skip eContentType OID
+    let (oid_tlv, remaining) = asn1::extract_tlv(inner).ok()?;
+
+    // Only parse for SPC_INDIRECT_DATA
+    if oid_tlv != asn1::OID_SPC_INDIRECT_DATA {
+        return None;
+    }
+
+    // [0] EXPLICIT wrapper around eContent
+    let (tag, explicit_content) = asn1::parse_tlv(remaining).ok()?;
+    if tag != 0xA0 {
+        return None;
+    }
+
+    // SpcIndirectDataContent SEQUENCE
+    let (_, spc_content) = asn1::parse_tlv(explicit_content).ok()?;
+
+    // Skip SpcAttributeTypeAndOptionalValue SEQUENCE
+    let (_, remaining) = asn1::extract_tlv(spc_content).ok()?;
+
+    // DigestInfo SEQUENCE
+    let (_, digest_info_content) = asn1::parse_tlv(remaining).ok()?;
+
+    // Skip AlgorithmIdentifier SEQUENCE
+    let (_, remaining) = asn1::extract_tlv(digest_info_content).ok()?;
+
+    // digest OCTET STRING
+    let (tag, digest_bytes) = asn1::parse_tlv(remaining).ok()?;
+    if tag != 0x04 {
+        return None;
+    }
+
+    Some(digest_bytes.to_vec())
 }
 
 /// Validate that the contentType attribute value matches the eContentType (RFC 5652 §5.3).
