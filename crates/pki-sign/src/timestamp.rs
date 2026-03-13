@@ -151,6 +151,10 @@ pub async fn request_timestamp(signature_bytes: &[u8], config: &TsaConfig) -> Si
     let mut last_error = String::new();
 
     for url in &config.urls {
+        // #12 fix: Warn on insecure TSA URLs — timestamps sent over HTTP can be tampered
+        if url.starts_with("http://") {
+            tracing::warn!(url = %url, "TSA URL uses insecure HTTP — timestamp integrity is not guaranteed");
+        }
         match send_tsa_request(&client, url, &req_der).await {
             Ok(token) => {
                 // RFC 3161 §2.4.2: validate nonce echo and messageImprint
