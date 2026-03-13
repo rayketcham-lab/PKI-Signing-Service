@@ -265,16 +265,11 @@ pub async fn sign_cab(
 ) -> SignResult<CabSignResult> {
     let cab_info = parse_cab_header(data)?;
 
-    // Reject already-signed CAB files unless allow_resign is set
+    // Reject already-signed CAB files — never strip existing signatures
     if cab_info.end_of_cab < cab_info.cb_cabinet as usize {
-        if !options.allow_resign {
-            return Err(SignError::AlreadySigned(
-                "CAB file already contains an Authenticode signature".into(),
-            ));
-        }
-        tracing::info!("Re-signing already-signed CAB file (allow_resign=true)");
-        // For CAB re-signing, the hash computation excludes the signature area,
-        // so the new signature will correctly replace the old one.
+        return Err(SignError::AlreadySigned(
+            "CAB file already contains an Authenticode signature — refusing to sign".into(),
+        ));
     }
 
     // Compute Authenticode hash

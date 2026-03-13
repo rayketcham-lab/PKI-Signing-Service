@@ -263,9 +263,7 @@ pub async fn sign_file(
         None
     };
 
-    let sign_options = crate::signer::SignOptions {
-        allow_resign: super::middleware::is_dev_mode_allowed(state.config.dev_mode),
-    };
+    let sign_options = crate::signer::SignOptions::default();
 
     let result = crate::signer::sign_file_with_options(
         temp_input.path(),
@@ -1073,9 +1071,7 @@ pub async fn sign_batch(
 
             std::fs::write(temp_input.path(), data).map_err(|e| AppError::new(SignError::Io(e)))?;
 
-            let batch_sign_options = crate::signer::SignOptions {
-                allow_resign: super::middleware::is_dev_mode_allowed(state.config.dev_mode),
-            };
+            let batch_sign_options = crate::signer::SignOptions::default();
 
             match crate::signer::sign_file_with_options(
                 temp_input.path(),

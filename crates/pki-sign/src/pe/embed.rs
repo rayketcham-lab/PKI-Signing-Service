@@ -42,8 +42,26 @@ pub fn embed_signature(data: &[u8], pe_info: &PeInfo, pkcs7_der: &[u8]) -> SignR
     let aligned_len = (cert_data_len + 7) & !7;
     let padding = aligned_len - cert_data_len;
 
-    // Start with original PE data up to end of image (strip existing sigs)
-    let mut output = data[..pe_info.end_of_image].to_vec();
+    // Determine where to attach the signature:
+    // - If the PE already has a certificate table, strip at that offset (re-signing)
+    // - Otherwise, keep the entire file and append after 8-byte alignment
+    // Using end_of_image (max section end) is WRONG — PE files often have overlay
+    // data, debug info, or other trailing content beyond the last section that must
+    // be preserved for the executable to function correctly.
+    let attach_offset = if pe_info.cert_table_rva > 0 {
+        pe_info.cert_table_rva as usize
+    } else {
+        data.len()
+    };
+
+    // Start with original PE data (preserving all content including overlays)
+    let mut output = data[..attach_offset].to_vec();
+
+    // Pad to 8-byte alignment before WIN_CERTIFICATE
+    let aligned_attach = (output.len() + 7) & !7;
+    output.resize(aligned_attach, 0);
+
+    let cert_rva = output.len();
 
     // Build WIN_CERTIFICATE structure
     let dw_length = aligned_len as u32;
@@ -56,13 +74,12 @@ pub fn embed_signature(data: &[u8], pe_info: &PeInfo, pkcs7_der: &[u8]) -> SignR
     output.extend(std::iter::repeat_n(0u8, padding));
 
     // Update Certificate Table directory entry
-    // RVA = file offset of the WIN_CERTIFICATE (= end_of_image)
-    let cert_rva = pe_info.end_of_image as u32;
     let cert_size = aligned_len as u32;
 
     // Write certificate table RVA
+    let cert_rva_u32 = cert_rva as u32;
     output[pe_info.cert_table_offset..pe_info.cert_table_offset + 4]
-        .copy_from_slice(&cert_rva.to_le_bytes());
+        .copy_from_slice(&cert_rva_u32.to_le_bytes());
     // Write certificate table size
     output[pe_info.cert_table_offset + 4..pe_info.cert_table_offset + 8]
         .copy_from_slice(&cert_size.to_le_bytes());
@@ -174,6 +191,7 @@ mod tests {
     }
 
     fn make_test_pe_info() -> PeInfo {
+        // Use 8-byte-aligned sizes so cert attachment is predictable
         PeInfo {
             pe_offset: 0,
             is_pe32_plus: false,
@@ -181,8 +199,8 @@ mod tests {
             cert_table_offset: 20,
             cert_table_rva: 0,
             cert_table_size: 0,
-            end_of_image: 100,
-            file_size: 100,
+            end_of_image: 104,
+            file_size: 104,
             sections: vec![],
             size_of_optional_header: 0,
             number_of_rva_and_sizes: 16,
@@ -192,14 +210,14 @@ mod tests {
     #[test]
     fn test_embed_signature_updates_cert_table() {
         let pe_info = make_test_pe_info();
-        let data = vec![0u8; 100];
+        let data = vec![0u8; 104];
         let pkcs7 = vec![0xAA; 32];
 
         let output = embed_signature(&data, &pe_info, &pkcs7).unwrap();
 
-        // Cert table RVA should point to end_of_image (100)
+        // Cert table RVA should point to file_size (104), aligned to 8
         let rva = u32::from_le_bytes([output[20], output[21], output[22], output[23]]);
-        assert_eq!(rva, 100);
+        assert_eq!(rva, 104);
 
         // Cert table size should be aligned to 8 bytes
         let size = u32::from_le_bytes([output[24], output[25], output[26], output[27]]);
@@ -209,25 +227,25 @@ mod tests {
     #[test]
     fn test_embed_signature_win_cert_header() {
         let pe_info = make_test_pe_info();
-        let data = vec![0u8; 100];
+        let data = vec![0u8; 104];
         let pkcs7 = vec![0xBB; 16];
 
         let output = embed_signature(&data, &pe_info, &pkcs7).unwrap();
 
-        // WIN_CERTIFICATE starts at end_of_image (100)
-        // wRevision at offset 104 (100+4)
-        let revision = u16::from_le_bytes([output[104], output[105]]);
+        // WIN_CERTIFICATE starts at file_size (104)
+        // wRevision at offset 108 (104+4)
+        let revision = u16::from_le_bytes([output[108], output[109]]);
         assert_eq!(revision, WIN_CERT_REVISION_2_0);
 
-        // wCertificateType at offset 106 (100+6)
-        let cert_type = u16::from_le_bytes([output[106], output[107]]);
+        // wCertificateType at offset 110 (104+6)
+        let cert_type = u16::from_le_bytes([output[110], output[111]]);
         assert_eq!(cert_type, WIN_CERT_TYPE_PKCS_SIGNED_DATA);
     }
 
     #[test]
     fn test_embed_signature_preserves_original_data() {
         let pe_info = make_test_pe_info();
-        let mut data = vec![0x55u8; 100];
+        let mut data = vec![0x55u8; 104];
         // Put some marker bytes in a region that shouldn't change
         data[30] = 0xDE;
         data[31] = 0xAD;
@@ -243,14 +261,14 @@ mod tests {
     #[test]
     fn test_embed_signature_output_aligned() {
         let pe_info = make_test_pe_info();
-        let data = vec![0u8; 100];
+        let data = vec![0u8; 104];
         // Use an odd-sized PKCS7 blob
         let pkcs7 = vec![0xCC; 13];
 
         let output = embed_signature(&data, &pe_info, &pkcs7).unwrap();
 
-        // Output should be end_of_image + aligned WIN_CERTIFICATE
-        assert_eq!(output.len() % 8, 100 % 8); // only the win_cert part is aligned
+        // Output length: file_size (104) + aligned WIN_CERT
+        assert_eq!(output.len() % 8, 0); // everything is 8-byte aligned
         let cert_size = u32::from_le_bytes([output[24], output[25], output[26], output[27]]);
         assert_eq!(cert_size % 8, 0);
     }

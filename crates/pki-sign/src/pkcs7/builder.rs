@@ -520,6 +520,13 @@ pub struct Pkcs7Builder {
     program_url: Option<String>,
     /// Whether this is a detached signature (no encapsulated content).
     detached: bool,
+    /// Whether this is a script (SIP-based) signature rather than PE Authenticode.
+    /// When true, uses SPC_SIPINFO_OBJID with the PowerShell SIP GUID instead
+    /// of SPC_PE_IMAGE_DATAOBJ with SpcPeImageData.
+    script_signing: bool,
+    /// DER-encoded signing time (UTCTime), captured at builder creation.
+    /// Ensures consistency across multiple build() calls (e.g., timestamping).
+    signing_time_der: Vec<u8>,
 }
 
 impl Pkcs7Builder {
@@ -537,6 +544,8 @@ impl Pkcs7Builder {
             program_name: None,
             program_url: None,
             detached: false,
+            script_signing: false,
+            signing_time_der: asn1::encode_utc_time_now(),
         }
     }
 
@@ -556,6 +565,8 @@ impl Pkcs7Builder {
             program_name: None,
             program_url: None,
             detached: true,
+            script_signing: false,
+            signing_time_der: asn1::encode_utc_time_now(),
         }
     }
 
@@ -589,6 +600,15 @@ impl Pkcs7Builder {
         self
     }
 
+    /// Enable script signing mode (PowerShell SIP).
+    ///
+    /// Uses `SPC_SIPINFO_OBJID` (1.3.6.1.4.1.311.2.1.30) with the PowerShell
+    /// SIP GUID instead of `SPC_PE_IMAGE_DATAOBJ` for the SpcIndirectDataContent.
+    pub fn with_script_signing(&mut self) -> &mut Self {
+        self.script_signing = true;
+        self
+    }
+
     /// Build the DER-encoded ContentInfo wrapping SignedData.
     ///
     /// For Authenticode mode, produces a PKCS#7 blob ready for embedding
@@ -609,8 +629,13 @@ impl Pkcs7Builder {
         // can compute its hash for the messageDigest signed attribute.
         // Per MS Authenticode spec, messageDigest = hash(eContent), where
         // eContent is the DER-encoded SpcIndirectDataContent.
+        let digest_alg = self.signing_algorithm.digest_algorithm();
         let spc_indirect_data = if !self.detached {
-            Some(build_spc_indirect_data(&self.image_hash))
+            if self.script_signing {
+                Some(build_spc_indirect_data_script(&self.image_hash))
+            } else {
+                Some(build_spc_indirect_data(&self.image_hash, digest_alg))
+            }
         } else {
             None
         };
@@ -618,17 +643,26 @@ impl Pkcs7Builder {
         // Step 3: Build signed attributes
         let attrs_content = if self.detached {
             // Detached mode: contentType = id-data, messageDigest = hash of file
-            build_detached_signed_attrs_content(&self.image_hash, self.signing_algorithm)
+            build_detached_signed_attrs_content(
+                &self.image_hash,
+                self.signing_algorithm,
+                &self.signing_time_der,
+            )
         } else {
             // Authenticode mode: contentType = SPC_INDIRECT_DATA,
-            // messageDigest = SHA-256(SpcIndirectDataContent DER)
-            use sha2::Digest as _;
-            let spc_hash = sha2::Sha256::digest(spc_indirect_data.as_ref().unwrap());
+            // messageDigest = digest of the SpcIndirectDataContent **content** bytes.
+            // OpenSSL's PKCS7_signatureVerify decodes the ASN.1 SEQUENCE and
+            // re-encodes only its inner content (without the outer SEQUENCE
+            // tag + length) before hashing. We must hash the same bytes.
+            let spc_der = spc_indirect_data.as_ref().unwrap();
+            let spc_content = &spc_der[1 + der_length_size(spc_der)..];
+            let spc_hash = digest_alg.digest(spc_content);
             build_signed_attrs_content(
                 &spc_hash,
                 self.signing_algorithm,
                 self.program_name.as_deref(),
                 self.program_url.as_deref(),
+                &self.signing_time_der,
             )
         };
 
@@ -645,6 +679,7 @@ impl Pkcs7Builder {
             &serial_der,
             &attrs_content,
             &signature_bytes,
+            self.signing_algorithm,
             self.timestamp_token.as_deref(),
         );
 
@@ -658,13 +693,15 @@ impl Pkcs7Builder {
         let certificates = asn1::encode_implicit_tag(0, &certs_data);
 
         // Step 8: Build SignedData
+        let digest_alg = self.signing_algorithm.digest_algorithm();
         let signed_data = if self.detached {
-            build_detached_signed_data(&certificates, &signer_info)
+            build_detached_signed_data(&certificates, &signer_info, digest_alg)
         } else {
             build_signed_data(
                 spc_indirect_data.as_ref().unwrap(),
                 &certificates,
                 &signer_info,
+                digest_alg,
             )
         };
 
@@ -791,22 +828,21 @@ fn extract_ski_from_cert_der(cert_der: &[u8]) -> Option<Vec<u8>> {
 ///     messageDigest   DigestInfo
 /// }
 /// ```
-fn build_spc_indirect_data(image_hash: &[u8]) -> Vec<u8> {
+fn build_spc_indirect_data(image_hash: &[u8], digest_alg: DigestAlgorithm) -> Vec<u8> {
     // SpcAttributeTypeAndOptionalValue ::= SEQUENCE {
     //     type  OID (SPC_PE_IMAGE_DATAOBJ 1.3.6.1.4.1.311.2.1.15),
     //     value SpcPeImageData OPTIONAL
     // }
-    // We include a minimal SpcPeImageData with flags=0 and file=obsolete
     let spc_pe_image_data = build_spc_pe_image_data();
     let spc_attr_type =
         asn1::encode_sequence(&[asn1::OID_SPC_PE_IMAGE_DATAOBJ, &spc_pe_image_data]);
 
     // DigestInfo ::= SEQUENCE {
-    //     digestAlgorithm AlgorithmIdentifier (SHA-256),
+    //     digestAlgorithm AlgorithmIdentifier,
     //     digest          OCTET STRING
     // }
     let digest_info = asn1::encode_sequence(&[
-        &asn1::SHA256_ALGORITHM_ID,
+        digest_alg.algorithm_id(),
         &asn1::encode_octet_string(image_hash),
     ]);
 
@@ -819,15 +855,106 @@ fn build_spc_indirect_data(image_hash: &[u8]) -> Vec<u8> {
 /// ```text
 /// SpcPeImageData ::= SEQUENCE {
 ///     flags    SpcPeImageFlags DEFAULT { includeResources },
-///     file     SpcLink OPTIONAL
+///     file     [0] EXPLICIT SpcLink OPTIONAL
+/// }
+///
+/// SpcLink ::= CHOICE {
+///     url     [0] IMPLICIT IA5String,
+///     moniker [1] IMPLICIT SpcSerializedObject,
+///     file    [2] EXPLICIT SpcString
+/// }
+///
+/// SpcString ::= CHOICE {
+///     unicode [0] IMPLICIT BMPString,
+///     ascii   [1] IMPLICIT IA5String
 /// }
 /// ```
+///
+/// We use the `file` variant of SpcLink with an empty BMPString (SpcString.unicode).
+/// The encoding is: `[0] EXPLICIT { [2] EXPLICIT { [0] IMPLICIT BMPString "" } }`.
 fn build_spc_pe_image_data() -> Vec<u8> {
     // BIT STRING with value 0 (no flags)
-    let flags = vec![0x03, 0x02, 0x00, 0x00]; // BIT STRING, length 2, 0 unused bits, value 0x00
-                                              // SpcLink [0] IMPLICIT — use obsolete form (empty)
-    let file = vec![0xA0, 0x02, 0x04, 0x00]; // [0] { OCTET STRING "" }
+    let flags: Vec<u8> = vec![0x03, 0x02, 0x00, 0x00];
+
+    // SpcLink.file = [2] EXPLICIT { SpcString.unicode = [0] IMPLICIT BMPString "" }
+    // Inner: [0] IMPLICIT BMPString (empty) = 0x80, 0x00
+    // Wrapped: [2] EXPLICIT { 0x80 0x00 } = 0xA2, 0x02, 0x80, 0x00
+    // Outer: [0] EXPLICIT (SpcPeImageData.file) = 0xA0, 0x04, 0xA2, 0x02, 0x80, 0x00
+    let file: Vec<u8> = vec![0xA0, 0x04, 0xA2, 0x02, 0x80, 0x00];
+
     asn1::encode_sequence(&[&flags, &file])
+}
+
+/// Build the SPC_INDIRECT_DATA_CONTENT for script (PowerShell SIP) signing.
+///
+/// Uses `SPC_SIPINFO_OBJID` (1.3.6.1.4.1.311.2.1.30) with an `SpcSipInfo`
+/// structure containing the PowerShell SIP GUID, instead of the PE-specific
+/// `SPC_PE_IMAGE_DATAOBJ` used for executable signing.
+///
+/// ```text
+/// SpcIndirectDataContent ::= SEQUENCE {
+///     data            SpcAttributeTypeAndOptionalValue,
+///     messageDigest   DigestInfo
+/// }
+/// ```
+fn build_spc_indirect_data_script(content_hash: &[u8]) -> Vec<u8> {
+    // SpcAttributeTypeAndOptionalValue ::= SEQUENCE {
+    //     type  OID (SPC_SIPINFO_OBJID 1.3.6.1.4.1.311.2.1.30),
+    //     value SpcSipInfo
+    // }
+    let spc_sip_info = build_spc_sip_info_powershell();
+    let spc_attr_type = asn1::encode_sequence(&[asn1::OID_SPC_SIPINFO, &spc_sip_info]);
+
+    // DigestInfo ::= SEQUENCE {
+    //     digestAlgorithm AlgorithmIdentifier (SHA-256),
+    //     digest          OCTET STRING
+    // }
+    let digest_info = asn1::encode_sequence(&[
+        &asn1::SHA256_ALGORITHM_ID,
+        &asn1::encode_octet_string(content_hash),
+    ]);
+
+    // SpcIndirectDataContent
+    asn1::encode_sequence(&[&spc_attr_type, &digest_info])
+}
+
+/// Build the SpcSipInfo structure for the PowerShell SIP.
+///
+/// ```text
+/// SpcSipInfo ::= SEQUENCE {
+///     dwSipVersion    INTEGER,     -- 0x00010000 (version 1.0)
+///     gSIPGuid        SpcUuid,     -- PowerShell SIP GUID
+///     dwReserved1     INTEGER,     -- 0
+///     dwReserved2     INTEGER,     -- 0
+///     dwReserved3     INTEGER,     -- 0
+///     dwReserved4     INTEGER,     -- 0
+///     dwReserved5     INTEGER      -- 0
+/// }
+/// ```
+///
+/// PowerShell SIP GUID: `{603BCC1F-4B59-4E08-B724-D2C6297EF351}`
+fn build_spc_sip_info_powershell() -> Vec<u8> {
+    // SIP version: 0x00010000 = 65536
+    let version = asn1::encode_integer_value(0x0001_0000);
+
+    // PowerShell SIP GUID as raw bytes (Windows GUID memory layout):
+    // {603BCC1F-4B59-4E08-B724-D2C6297EF351}
+    // Data1 (LE u32): 0x603BCC1F → 1F CC 3B 60
+    // Data2 (LE u16): 0x4B59     → 59 4B
+    // Data3 (LE u16): 0x4E08     → 08 4E
+    // Data4 (8 bytes): B7 24 D2 C6 29 7E F3 51
+    let guid_bytes: [u8; 16] = [
+        0x1F, 0xCC, 0x3B, 0x60, // Data1
+        0x59, 0x4B, // Data2
+        0x08, 0x4E, // Data3
+        0xB7, 0x24, 0xD2, 0xC6, 0x29, 0x7E, 0xF3, 0x51, // Data4
+    ];
+    let guid = asn1::encode_octet_string(&guid_bytes);
+
+    // Five reserved DWORDs, all zero
+    let zero = asn1::encode_integer_value(0);
+
+    asn1::encode_sequence(&[&version, &guid, &zero, &zero, &zero, &zero, &zero])
 }
 
 /// Build signed attributes with DER SET OF ordering (RFC 5652 Section 5.3).
@@ -901,6 +1028,7 @@ fn build_signed_attrs_content(
     signing_alg: SigningAlgorithm,
     program_name: Option<&str>,
     program_url: Option<&str>,
+    signing_time_der: &[u8],
 ) -> Vec<u8> {
     // Attribute 1: contentType
     let content_type_attr = asn1::encode_sequence(&[
@@ -914,27 +1042,20 @@ fn build_signed_attrs_content(
         &asn1::encode_set(&asn1::encode_octet_string(image_hash)),
     ]);
 
-    // Attribute 3: signingTime
-    let utc_time = asn1::encode_utc_time_now();
+    // Attribute 3: signingTime (use pre-computed time for consistency across builds)
     let signing_time_attr =
-        asn1::encode_sequence(&[asn1::OID_SIGNING_TIME, &asn1::encode_set(&utc_time)]);
+        asn1::encode_sequence(&[asn1::OID_SIGNING_TIME, &asn1::encode_set(signing_time_der)]);
 
-    // Attribute 4: CMSAlgorithmProtection (RFC 8933)
-    let cms_alg_protection_attr = build_cms_algorithm_protection_attr(signing_alg);
+    let mut attrs: Vec<Vec<u8>> = vec![content_type_attr, message_digest_attr, signing_time_attr];
 
-    let mut content = Vec::new();
-    content.extend_from_slice(&content_type_attr);
-    content.extend_from_slice(&message_digest_attr);
-    content.extend_from_slice(&signing_time_attr);
-    content.extend_from_slice(&cms_alg_protection_attr);
+    // SpcSpOpusInfo (MS-SWINC — program name/URL)
+    // Always included for Authenticode compatibility — osslsigncode and Windows
+    // signtool always emit this attribute, even when name/URL are empty.
+    attrs.push(build_spc_sp_opus_info_attr(program_name, program_url));
 
-    // Attribute 5 (optional): SpcSpOpusInfo (MS-SWINC — program name/URL)
-    if program_name.is_some() || program_url.is_some() {
-        let opus_attr = build_spc_sp_opus_info_attr(program_name, program_url);
-        content.extend_from_slice(&opus_attr);
-    }
-
-    content
+    // DER SET OF requires lexicographic sorting of encoded elements (X.690 §11.6)
+    attrs.sort();
+    attrs.into_iter().flatten().collect()
 }
 
 /// Build the raw content of signed attributes for detached CMS signatures.
@@ -950,6 +1071,7 @@ fn build_signed_attrs_content(
 fn build_detached_signed_attrs_content(
     content_digest: &[u8],
     signing_alg: SigningAlgorithm,
+    signing_time_der: &[u8],
 ) -> Vec<u8> {
     // Attribute 1: contentType = id-data
     let content_type_attr =
@@ -961,21 +1083,14 @@ fn build_detached_signed_attrs_content(
         &asn1::encode_set(&asn1::encode_octet_string(content_digest)),
     ]);
 
-    // Attribute 3: signingTime
-    let utc_time = asn1::encode_utc_time_now();
+    // Attribute 3: signingTime (use pre-computed time for consistency across builds)
     let signing_time_attr =
-        asn1::encode_sequence(&[asn1::OID_SIGNING_TIME, &asn1::encode_set(&utc_time)]);
+        asn1::encode_sequence(&[asn1::OID_SIGNING_TIME, &asn1::encode_set(signing_time_der)]);
 
-    // Attribute 4: CMSAlgorithmProtection (RFC 8933)
-    let cms_alg_protection_attr = build_cms_algorithm_protection_attr(signing_alg);
-
-    let mut content = Vec::new();
-    content.extend_from_slice(&content_type_attr);
-    content.extend_from_slice(&message_digest_attr);
-    content.extend_from_slice(&signing_time_attr);
-    content.extend_from_slice(&cms_alg_protection_attr);
-
-    content
+    // DER SET OF requires lexicographic sorting of encoded elements (X.690 §11.6)
+    let mut attrs = vec![content_type_attr, message_digest_attr, signing_time_attr];
+    attrs.sort();
+    attrs.into_iter().flatten().collect()
 }
 
 /// Build the CMSAlgorithmProtection signed attribute (RFC 8933) — legacy single-algorithm.
@@ -1262,6 +1377,7 @@ fn build_signer_info(
     serial_der: &[u8],
     signed_attrs_content: &[u8],
     signature_bytes: &[u8],
+    signing_algorithm: SigningAlgorithm,
     timestamp_token: Option<&[u8]>,
 ) -> Vec<u8> {
     // version INTEGER 1
@@ -1270,14 +1386,23 @@ fn build_signer_info(
     // issuerAndSerialNumber SEQUENCE { issuer, serialNumber }
     let issuer_and_serial = asn1::encode_sequence(&[issuer_der, serial_der]);
 
-    // digestAlgorithm AlgorithmIdentifier (SHA-256)
-    let digest_alg_bytes: &[u8] = &asn1::SHA256_ALGORITHM_ID;
+    // digestAlgorithm — must match the actual digest used
+    let digest_alg = signing_algorithm.digest_algorithm();
+    let digest_alg_bytes: &[u8] = digest_alg.algorithm_id();
 
     // signedAttrs [0] IMPLICIT — replace SET tag with 0xA0
     let signed_attrs = asn1::encode_implicit_tag(0, signed_attrs_content);
 
-    // signatureAlgorithm AlgorithmIdentifier (sha256WithRSAEncryption)
-    let sig_alg: &[u8] = &asn1::SHA256_WITH_RSA_ALGORITHM_ID;
+    // signatureAlgorithm — for Authenticode, RSA variants use rsaEncryption
+    // (OID 1.2.840.113549.1.1.1) in the SignerInfo signatureAlgorithm field,
+    // with the digest algorithm specified separately in digestAlgorithm.
+    // This matches osslsigncode and Windows WinVerifyTrust behavior.
+    let sig_alg: &[u8] = match signing_algorithm {
+        SigningAlgorithm::RsaSha256 | SigningAlgorithm::RsaSha384 | SigningAlgorithm::RsaSha512 => {
+            &asn1::RSA_ENCRYPTION_ALGORITHM_ID
+        }
+        _ => signing_algorithm.algorithm_id(),
+    };
 
     // signature OCTET STRING
     let sig_value = asn1::encode_octet_string(signature_bytes);
@@ -1303,13 +1428,19 @@ fn build_signer_info(
 }
 
 /// Build the SignedData SEQUENCE.
-fn build_signed_data(spc_indirect: &[u8], certificates: &[u8], signer_info: &[u8]) -> Vec<u8> {
-    // RFC 5652 §5.1: version MUST be 3 when eContentType != id-data
-    // (Authenticode uses SPC_INDIRECT_DATA, so always 3)
-    let version = asn1::encode_integer_value(3);
+fn build_signed_data(
+    spc_indirect: &[u8],
+    certificates: &[u8],
+    signer_info: &[u8],
+    digest_alg: DigestAlgorithm,
+) -> Vec<u8> {
+    // Authenticode uses version 1 per MS specification, even though RFC 5652
+    // says version 3 when eContentType != id-data. Windows WinVerifyTrust
+    // and osslsigncode both expect version 1 for Authenticode.
+    let version = asn1::encode_integer_value(1);
 
-    // digestAlgorithms SET { AlgorithmIdentifier(SHA-256) }
-    let digest_algorithms = asn1::encode_set(&asn1::SHA256_ALGORITHM_ID);
+    // digestAlgorithms SET { AlgorithmIdentifier }
+    let digest_algorithms = asn1::encode_set(digest_alg.algorithm_id());
 
     // contentInfo — EncapsulatedContentInfo with SPC_INDIRECT_DATA
     // SEQUENCE { OID SPC_INDIRECT_DATA_OBJID, [0] EXPLICIT { spc_indirect } }
@@ -1335,12 +1466,16 @@ fn build_signed_data(spc_indirect: &[u8], certificates: &[u8], signer_info: &[u8
 /// In detached mode, the EncapsulatedContentInfo contains only the content
 /// type OID (`id-data`) with no encapsulated content. The actual file content
 /// is transmitted separately.
-fn build_detached_signed_data(certificates: &[u8], signer_info: &[u8]) -> Vec<u8> {
+fn build_detached_signed_data(
+    certificates: &[u8],
+    signer_info: &[u8],
+    digest_alg: DigestAlgorithm,
+) -> Vec<u8> {
     // RFC 5652 §5.1: version is 1 when eContentType is id-data
     let version = asn1::encode_integer_value(1);
 
-    // digestAlgorithms SET { AlgorithmIdentifier(SHA-256) }
-    let digest_algorithms = asn1::encode_set(&asn1::SHA256_ALGORITHM_ID);
+    // digestAlgorithms SET { AlgorithmIdentifier }
+    let digest_algorithms = asn1::encode_set(digest_alg.algorithm_id());
 
     // EncapsulatedContentInfo — SEQUENCE { OID id-data } (no [0] content)
     let content_info = asn1::encode_sequence(&[asn1::OID_DATA]);
@@ -1803,7 +1938,7 @@ mod tests {
     #[test]
     fn test_spc_indirect_data_structure() {
         let hash = vec![0xAA; 32]; // fake SHA-256 hash
-        let spc = build_spc_indirect_data(&hash);
+        let spc = build_spc_indirect_data(&hash, DigestAlgorithm::Sha256);
         // Must start with SEQUENCE tag
         assert_eq!(spc[0], 0x30);
         // Must contain our hash somewhere
@@ -1813,7 +1948,13 @@ mod tests {
     #[test]
     fn test_signed_attrs_content() {
         let hash = vec![0xBB; 32];
-        let attrs = build_signed_attrs_content(&hash, SigningAlgorithm::RsaSha256, None, None);
+        let attrs = build_signed_attrs_content(
+            &hash,
+            SigningAlgorithm::RsaSha256,
+            None,
+            None,
+            &asn1::encode_utc_time_now(),
+        );
         // Should contain four SEQUENCE-tagged attributes:
         // contentType, messageDigest, signingTime, CMSAlgorithmProtection
         let mut count = 0;
@@ -1833,7 +1974,13 @@ mod tests {
     #[test]
     fn test_signed_attrs_content_ecdsa() {
         let hash = vec![0xCC; 32];
-        let attrs = build_signed_attrs_content(&hash, SigningAlgorithm::EcdsaSha256, None, None);
+        let attrs = build_signed_attrs_content(
+            &hash,
+            SigningAlgorithm::EcdsaSha256,
+            None,
+            None,
+            &asn1::encode_utc_time_now(),
+        );
         // Should also contain four attributes for ECDSA
         let mut count = 0;
         let mut pos = 0;
@@ -1852,13 +1999,16 @@ mod tests {
     #[test]
     fn test_signed_attrs_with_opus_info() {
         let hash = vec![0xDD; 32];
+        let time = asn1::encode_utc_time_now();
         let attrs = build_signed_attrs_content(
             &hash,
             SigningAlgorithm::RsaSha256,
             Some("SPORK CA"),
             Some("https://quantumnexum.com/spork"),
+            &time,
         );
-        // Should contain 5 attributes (4 base + SpcSpOpusInfo)
+        // Should contain 4 attributes: contentType, messageDigest, signingTime, SpcSpOpusInfo
+        // (SpcSpOpusInfo is always included; with name/URL it has non-empty content)
         let mut count = 0;
         let mut pos = 0;
         while pos < attrs.len() {
@@ -1870,7 +2020,7 @@ mod tests {
                 pos += 1;
             }
         }
-        assert_eq!(count, 5, "Expected 5 signed attributes with SpcSpOpusInfo");
+        assert_eq!(count, 4, "Expected 4 signed attributes with SpcSpOpusInfo");
     }
 
     #[test]

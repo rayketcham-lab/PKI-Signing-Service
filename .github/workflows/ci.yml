@@ -189,6 +189,27 @@ jobs:
             echo "WARN: pki-sign may not be fully static"
           fi
 
+  authenticode-verify:
+    name: Authenticode Verification
+    needs: [fmt, clippy]
+    runs-on: [self-hosted, Linux]
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4.3.1
+      - uses: dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7  # stable
+      - uses: Swatinem/rust-cache@401aff9a7a08acb9d27b64936a90db81024cff97  # v2.8.2
+        with:
+          prefix-key: "v0-rust-${{ runner.name }}"
+      - name: Install osslsigncode
+        run: |
+          if ! command -v osslsigncode &> /dev/null; then
+            sudo apt-get update
+            sudo apt-get install -y osslsigncode
+          fi
+          osslsigncode --version
+      - name: Run Authenticode verification tests
+        run: cargo test --workspace -- osslsigncode_verify
+
   audit:
     name: Security Audit
     runs-on: [self-hosted, Linux]

@@ -163,14 +163,9 @@ pub async fn sign_msi(
 
         let sig_path = format!("/{DIGITAL_SIGNATURE_STREAM}");
         if comp.is_stream(&sig_path) {
-            if !options.allow_resign {
-                return Err(SignError::AlreadySigned(
-                    "MSI file already contains an Authenticode signature".into(),
-                ));
-            }
-            tracing::info!("Re-signing already-signed MSI file (allow_resign=true)");
-            // For MSI re-signing, the existing DigitalSignature stream will be
-            // overwritten with the new signature.
+            return Err(SignError::AlreadySigned(
+                "MSI file already contains an Authenticode signature — refusing to sign".into(),
+            ));
         }
     }
 

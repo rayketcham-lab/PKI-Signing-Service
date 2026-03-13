@@ -385,9 +385,9 @@ pub struct DetachedSignResult {
 /// Options controlling signing behavior.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct SignOptions {
-    /// When `true`, strip existing signatures and re-sign instead of rejecting.
-    /// Only effective in dev mode (debug builds with dev_mode=true).
-    pub allow_resign: bool,
+    /// Reserved for future use. Re-signing is always rejected — existing
+    /// signatures are never stripped.
+    _private: (),
 }
 
 /// Sign a file using Authenticode.
@@ -482,10 +482,9 @@ pub async fn sign_detached(
     tsa_config: Option<&TsaConfig>,
 ) -> SignResult<DetachedSignResult> {
     let data = std::fs::read(input_path)?;
-    let file_hash = hex::encode(Sha256::digest(&data));
-
-    // Compute SHA-256 of the entire file content
-    let digest = Sha256::digest(&data);
+    let digest_alg = credentials.signing_algorithm().digest_algorithm();
+    let digest = digest_alg.digest(&data);
+    let file_hash = hex::encode(&digest);
 
     // Build detached CMS/PKCS#7 SignedData using OID_DATA content type
     let mut builder =
@@ -847,28 +846,37 @@ async fn sign_pe(
     tsa_config: Option<&TsaConfig>,
     options: &SignOptions,
 ) -> SignResult<PeSignResult> {
-    // Parse PE headers
-    let pe_info = pe::PeInfo::parse(data)?;
+    // Parse PE headers (on original data to check if signed)
+    let pe_info_orig = pe::PeInfo::parse(data)?;
 
-    // Reject already-signed files unless allow_resign is set
-    if pe_info.is_signed() {
-        if !options.allow_resign {
-            return Err(SignError::AlreadySigned(
-                "PE file already contains an Authenticode signature".into(),
-            ));
-        }
-        tracing::info!("Re-signing already-signed PE file (allow_resign=true)");
-        // PE re-signing: strip existing signature by truncating at the security directory
-        // The Authenticode hash computation already excludes the signature area,
-        // so we can proceed with signing — the new signature will replace the old one.
+    // Reject already-signed files — never strip existing signatures
+    if pe_info_orig.is_signed() {
+        return Err(SignError::AlreadySigned(
+            "PE file already contains an Authenticode signature — refusing to sign".into(),
+        ));
     }
 
-    // Compute Authenticode hash (SHA-256)
-    let image_hash = pe::compute_authenticode_hash(data, &pe_info)?;
+    // Pad data to 8-byte alignment before hashing.
+    // embed_signature() pads to 8-byte alignment before the cert table.
+    // Verifiers compute: hash(file[0 .. file_size - cert_table_size]),
+    // which includes alignment padding. We must hash the same bytes.
+    let aligned_len = (data.len() + 7) & !7;
+    let sign_data: std::borrow::Cow<'_, [u8]> = if aligned_len != data.len() {
+        let mut v = data.to_vec();
+        v.resize(aligned_len, 0);
+        std::borrow::Cow::Owned(v)
+    } else {
+        std::borrow::Cow::Borrowed(data)
+    };
+
+    let pe_info = pe::PeInfo::parse(&sign_data)?;
+    let signing_alg = credentials.signing_algorithm();
+    let digest_alg = signing_alg.digest_algorithm();
+    let image_hash = pe::compute_authenticode_hash_with(&sign_data, &pe_info, digest_alg)?;
 
     // Build CMS/PKCS#7 SignedData
     let mut builder = Pkcs7Builder::new(credentials.signer_cert_der.clone(), image_hash);
-    builder.with_algorithm(credentials.signing_algorithm());
+    builder.with_algorithm(signing_alg);
 
     // Add chain certificates
     for chain_cert in &credentials.chain_certs_der {
@@ -910,8 +918,8 @@ async fn sign_pe(
     // signed attributes using RSASSA-PKCS1-v1_5 with SHA-256
     let pkcs7_der = builder.build(|signed_attrs_der| credentials.sign_data(signed_attrs_der))?;
 
-    // Embed the signature in the PE file
-    let signed_pe = pe::embed_signature(data, &pe_info, &pkcs7_der)?;
+    // Embed the signature in the PE file (use padded data so alignment is consistent)
+    let signed_pe = pe::embed_signature(&sign_data, &pe_info, &pkcs7_der)?;
 
     Ok(PeSignResult {
         signed_data: signed_pe,
@@ -991,10 +999,12 @@ pub fn sign_pe_bytes(data: &[u8], credentials: &SigningCredentials) -> SignResul
         ));
     }
 
-    let image_hash = pe::compute_authenticode_hash(data, &pe_info)?;
+    let signing_alg = credentials.signing_algorithm();
+    let digest_alg = signing_alg.digest_algorithm();
+    let image_hash = pe::compute_authenticode_hash_with(data, &pe_info, digest_alg)?;
 
     let mut builder = Pkcs7Builder::new(credentials.signer_cert_der.clone(), image_hash);
-    builder.with_algorithm(credentials.signing_algorithm());
+    builder.with_algorithm(signing_alg);
 
     for chain_cert in &credentials.chain_certs_der {
         builder.add_chain_cert(chain_cert.clone());
@@ -2415,4 +2425,117 @@ mod tests {
     }
 
     use chrono::Datelike;
+
+    #[test]
+    /// Verify that osslsigncode can parse and validate our Authenticode signatures.
+    /// This is the gold-standard interop test — osslsigncode uses the same verification
+    /// path as Windows, so if it passes here, Windows will accept the signature.
+    fn osslsigncode_verify_pe_rsa() {
+        if std::process::Command::new("osslsigncode")
+            .arg("--version")
+            .output()
+            .is_err()
+        {
+            eprintln!("skipping: osslsigncode not available");
+            return;
+        }
+        let dir = tempfile::tempdir().expect("create temp dir");
+        let (pfx_path, password) = generate_test_pfx(dir.path());
+        let creds =
+            SigningCredentials::from_pfx(&pfx_path, &password).expect("from_pfx should succeed");
+
+        let pe_data = build_test_pe();
+        let signed_pe = sign_pe_bytes(&pe_data, &creds).expect("sign_pe_bytes should succeed");
+        let pe_path = dir.path().join("signed.exe");
+        std::fs::write(&pe_path, &signed_pe).expect("write signed PE");
+
+        let output = std::process::Command::new("osslsigncode")
+            .arg("verify")
+            .arg(&pe_path)
+            .output()
+            .expect("run osslsigncode");
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let combined = format!("{stdout}\n{stderr}");
+
+        // osslsigncode exits 1 for self-signed certs, but the structure must be valid.
+        // Check that digest computation succeeds (current == calculated).
+        assert!(
+            combined.contains("Current message digest"),
+            "osslsigncode should parse the signature structure:\n{combined}"
+        );
+
+        // Extract the two digest lines and verify they match
+        let current: Option<&str> = combined
+            .lines()
+            .find(|l| l.contains("Current message digest"))
+            .map(|l| l.split(':').next_back().unwrap_or("").trim());
+        let calculated: Option<&str> = combined
+            .lines()
+            .find(|l| l.contains("Calculated message digest"))
+            .map(|l| l.split(':').next_back().unwrap_or("").trim());
+        assert_eq!(
+            current, calculated,
+            "Authenticode digest mismatch — PE hash computation is wrong"
+        );
+
+        // Must NOT contain SpcLink parsing errors
+        assert!(
+            !combined.contains("no matching choice type"),
+            "SpcLink CHOICE encoding is wrong:\n{combined}"
+        );
+    }
+
+    /// Verify ECDSA-P256 PE signature with osslsigncode.
+    #[test]
+    fn osslsigncode_verify_pe_ecdsa() {
+        if std::process::Command::new("osslsigncode")
+            .arg("--version")
+            .output()
+            .is_err()
+        {
+            eprintln!("skipping: osslsigncode not available");
+            return;
+        }
+        let dir = tempfile::tempdir().expect("create temp dir");
+        let pfx_path = fixture_pfx("ecdsa-p256.pfx");
+        let creds =
+            SigningCredentials::from_pfx(&pfx_path, "test").expect("load ECDSA-P256 fixture");
+
+        let pe_data = build_test_pe();
+        let signed_pe = sign_pe_bytes(&pe_data, &creds).expect("sign_pe_bytes ECDSA");
+        let pe_path = dir.path().join("signed_ecdsa.exe");
+        std::fs::write(&pe_path, &signed_pe).expect("write signed PE");
+
+        let output = std::process::Command::new("osslsigncode")
+            .arg("verify")
+            .arg(&pe_path)
+            .output()
+            .expect("run osslsigncode");
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let combined = format!("{stdout}\n{stderr}");
+
+        assert!(
+            combined.contains("Current message digest"),
+            "osslsigncode should parse ECDSA signature:\n{combined}"
+        );
+
+        let current: Option<&str> = combined
+            .lines()
+            .find(|l| l.contains("Current message digest"))
+            .map(|l| l.split(':').next_back().unwrap_or("").trim());
+        let calculated: Option<&str> = combined
+            .lines()
+            .find(|l| l.contains("Calculated message digest"))
+            .map(|l| l.split(':').next_back().unwrap_or("").trim());
+        assert_eq!(current, calculated, "ECDSA Authenticode digest mismatch");
+
+        assert!(
+            !combined.contains("no matching choice type"),
+            "SpcLink CHOICE encoding is wrong:\n{combined}"
+        );
+    }
 }

@@ -146,10 +146,9 @@ impl PeInfo {
             data[cert_table_offset + 7],
         ]);
 
-        // Parse section headers to find end of image
+        // Parse section headers
         let section_table_offset = opt_offset + size_of_optional_header as usize;
         let mut sections = Vec::with_capacity(num_sections as usize);
-        let mut end_of_image: usize = 0;
 
         for i in 0..num_sections as usize {
             let sec_offset = section_table_offset + i * 40;
@@ -169,11 +168,12 @@ impl PeInfo {
                 data[sec_offset + 19],
             ]);
             sections.push((ptr_raw, size_raw));
-            let sec_end = ptr_raw as usize + size_raw as usize;
-            if sec_end > end_of_image {
-                end_of_image = sec_end;
-            }
         }
+
+        // Per Authenticode spec: hash covers FILE_SIZE minus certificate table.
+        // This correctly includes overlay data (debug info, resources, etc.)
+        // that exists beyond the last PE section.
+        let end_of_image = data.len() - cert_table_size as usize;
 
         Ok(PeInfo {
             pe_offset,

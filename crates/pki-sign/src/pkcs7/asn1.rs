@@ -33,6 +33,11 @@ pub const OID_SPC_PE_IMAGE_DATAOBJ: &[u8] = &[
     0x06, 0x0A, 0x2B, 0x06, 0x01, 0x04, 0x01, 0x82, 0x37, 0x02, 0x01, 0x0F,
 ];
 
+/// OID 1.3.6.1.4.1.311.2.1.30 — SPC_SIPINFO_OBJID (SIP-based signatures)
+pub const OID_SPC_SIPINFO: &[u8] = &[
+    0x06, 0x0A, 0x2B, 0x06, 0x01, 0x04, 0x01, 0x82, 0x37, 0x02, 0x01, 0x1E,
+];
+
 /// OID 1.3.6.1.4.1.311.2.1.12 — SPC_SP_OPUS_INFO_OBJID
 pub const OID_SPC_SP_OPUS_INFO: &[u8] = &[
     0x06, 0x0A, 0x2B, 0x06, 0x01, 0x04, 0x01, 0x82, 0x37, 0x02, 0x01, 0x0C,
@@ -274,6 +279,17 @@ pub const SHA3_384_ALGORITHM_ID: [u8; 15] = [
 pub const SHA3_512_ALGORITHM_ID: [u8; 15] = [
     0x30, 0x0D, // SEQUENCE, length 13
     0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x0A, // OID sha3-512
+    0x05, 0x00, // NULL
+];
+
+/// AlgorithmIdentifier for rsaEncryption (1.2.840.113549.1.1.1): SEQUENCE { OID, NULL }
+///
+/// Used as the signatureAlgorithm in Authenticode SignerInfo, where the
+/// digest algorithm is specified separately in the digestAlgorithm field.
+/// This matches osslsigncode and Windows Authenticode behavior.
+pub const RSA_ENCRYPTION_ALGORITHM_ID: [u8; 15] = [
+    0x30, 0x0D, // SEQUENCE, length 13
+    0x06, 0x09, 0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x01, 0x01, // OID rsaEncryption
     0x05, 0x00, // NULL
 ];
 

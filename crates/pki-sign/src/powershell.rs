@@ -48,14 +48,21 @@ pub(crate) fn normalize_crlf(content: &str) -> String {
     out
 }
 
-/// Hash script content as raw UTF-8 bytes for Windows PowerShell Authenticode.
+/// Hash script content as UTF-16LE bytes for Windows PowerShell Authenticode.
 ///
-/// Windows' SIP hashes the raw file bytes (after stripping the signature
-/// block and trimming trailing newlines).  Line endings must be CRLF.
+/// Windows' PowerShell SIP (`pwrshsip.dll`) converts script content to
+/// UTF-16LE internally before computing the Authenticode digest. We must
+/// match this encoding to produce hashes that `Get-AuthenticodeSignature`
+/// can verify. Line endings must be CRLF before encoding.
 pub(crate) fn hash_script_bytes(content: &str) -> Vec<u8> {
     let normalized = normalize_crlf(content);
     let trimmed = normalized.trim_end_matches(['\r', '\n']);
-    Sha256::digest(trimmed.as_bytes()).to_vec()
+    // Encode as UTF-16LE (no BOM) — matches Windows SIP behavior
+    let utf16le: Vec<u8> = trimmed
+        .encode_utf16()
+        .flat_map(|c| c.to_le_bytes())
+        .collect();
+    Sha256::digest(&utf16le).to_vec()
 }
 
 /// Marker for the end of a PowerShell signature block.
@@ -80,19 +87,20 @@ pub fn strip_signature(content: &str) -> &str {
 
 /// Build a CMS/PKCS#7 SignedData for PowerShell script content.
 ///
-/// Unlike PE Authenticode which uses SPC_INDIRECT_DATA, PowerShell signing
-/// uses standard CMS SignedData with id-data as the content type.
-/// The hash covers the UTF-8 script bytes (everything before the sig block).
+/// Uses SPC_SIPINFO_OBJID with the PowerShell SIP GUID instead of
+/// SPC_PE_IMAGE_DATAOBJ, and hashes content as UTF-16LE to match
+/// Windows pwrshsip.dll behavior.
 fn build_ps1_pkcs7(
     script_hash: &[u8],
     credentials: &SigningCredentials,
     timestamp_token: Option<&[u8]>,
 ) -> SignResult<Vec<u8>> {
-    // For PowerShell, we use the same Pkcs7Builder (it builds Authenticode-style)
-    // but the content is the script hash rather than a PE image hash.
+    // Use the Pkcs7Builder in script_signing mode — this builds
+    // SpcIndirectData with SPC_SIPINFO_OBJID + PowerShell SIP GUID.
     let mut builder =
         Pkcs7Builder::new(credentials.signer_cert_der().to_vec(), script_hash.to_vec());
     builder.with_algorithm(credentials.signing_algorithm());
+    builder.with_script_signing();
 
     for chain_cert in credentials.chain_certs_der() {
         builder.add_chain_cert(chain_cert.clone());
@@ -151,14 +159,11 @@ pub async fn sign_ps1(
     };
     let content = String::from_utf8_lossy(raw);
 
-    // Reject already-signed files unless allow_resign is set
+    // Reject already-signed files — never strip existing signatures
     if is_signed(&content) {
-        if !options.allow_resign {
-            return Err(SignError::AlreadySigned(
-                "PowerShell script already contains a signature block".into(),
-            ));
-        }
-        tracing::info!("Re-signing already-signed PowerShell script (allow_resign=true)");
+        return Err(SignError::AlreadySigned(
+            "PowerShell script already contains a signature block — refusing to sign".into(),
+        ));
     }
 
     // Strip existing signature if present (safe for unsigned files too).
