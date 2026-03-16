@@ -18,6 +18,7 @@ Thumbs.db
 *.key
 *.p12
 *.pfx
+!crates/pki-sign/tests/fixtures/*.pfx
 
 # Distribution
 /dist/

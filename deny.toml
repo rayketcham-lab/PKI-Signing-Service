@@ -8,13 +8,10 @@
 [advisories]
 # Ignore specific advisories (with justification)
 ignore = [
-    # Unmaintained crates in transitive dependencies - monitored but acceptable
-    { id = "RUSTSEC-2024-0370", reason = "proc-macro-error: unmaintained, transitive via tabled, no security impact" },
-    { id = "RUSTSEC-2024-0436", reason = "paste macro: unmaintained but widely used, no security impact" },
-    { id = "RUSTSEC-2025-0119", reason = "number_prefix: unmaintained, display-only functionality" },
-    { id = "RUSTSEC-2025-0134", reason = "rustls-pemfile: unmaintained, migrating to rustls-pem" },
     # RSA timing sidechannel - mitigated by not using RSA decryption in production signing paths
     { id = "RUSTSEC-2023-0071", reason = "rsa Marvin attack: pki-sign only uses RSA signing, not decryption in critical paths" },
+    # ML-DSA timing sidechannel in Decompose - ml-dsa 0.0.4, awaiting upstream fix
+    { id = "RUSTSEC-2025-0144", reason = "ml-dsa timing side-channel: experimental PQ support, not used in production signing yet" },
 ]
 
 # ============================================================================
@@ -75,7 +72,7 @@ deny = [
 
     # Legacy hash algorithms - allowed through specific compatibility wrappers
     # sha1: x509-cert parsing, PKCS#12/PFX, OAEP legacy
-    { name = "sha1", wrappers = ["pki-sign", "axum", "x509-cert", "p12", "p12-keystore"] },
+    { name = "sha1", wrappers = ["pki-sign", "axum", "x509-cert", "p12", "p12-keystore", "zip"] },
 
     # Deprecated/insecure crates (no legitimate use)
     { name = "rust-crypto" },
