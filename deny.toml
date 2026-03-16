@@ -12,6 +12,8 @@ ignore = [
     { id = "RUSTSEC-2023-0071", reason = "rsa Marvin attack: pki-sign only uses RSA signing, not decryption in critical paths" },
     # ML-DSA timing sidechannel in Decompose - ml-dsa 0.0.4, awaiting upstream fix
     { id = "RUSTSEC-2025-0144", reason = "ml-dsa timing side-channel: experimental PQ support, not used in production signing yet" },
+    # rustls-pemfile unmaintained — transitive dep via rustls/reqwest, migrating to rustls-pem
+    { id = "RUSTSEC-2025-0134", reason = "rustls-pemfile: unmaintained, transitive via reqwest/rustls, no security impact" },
 ]
 
 # ============================================================================
