@@ -870,17 +870,37 @@ fn build_spc_indirect_data(image_hash: &[u8], digest_alg: DigestAlgorithm) -> Ve
 /// }
 /// ```
 ///
-/// We use the `file` variant of SpcLink with an empty BMPString (SpcString.unicode).
-/// The encoding is: `[0] EXPLICIT { [2] EXPLICIT { [0] IMPLICIT BMPString "" } }`.
+/// We use the `file` variant of SpcLink with `<<<Obsolete>>>` BMPString,
+/// matching signtool and osslsigncode behavior.
+///
+/// The encoding is: `[0] EXPLICIT { [2] EXPLICIT { [0] IMPLICIT BMPString } }`.
 fn build_spc_pe_image_data() -> Vec<u8> {
-    // BIT STRING with value 0 (no flags)
-    let flags: Vec<u8> = vec![0x03, 0x02, 0x00, 0x00];
+    // BIT STRING with includeResources flag set (bit 0)
+    // Encoding: tag=0x03, len=0x02, unused_bits=7, value=0x80 (bit 0 set)
+    // This is the Authenticode default, matching signtool and osslsigncode.
+    let flags: Vec<u8> = vec![0x03, 0x02, 0x07, 0x80];
 
-    // SpcLink.file = [2] EXPLICIT { SpcString.unicode = [0] IMPLICIT BMPString "" }
-    // Inner: [0] IMPLICIT BMPString (empty) = 0x80, 0x00
-    // Wrapped: [2] EXPLICIT { 0x80 0x00 } = 0xA2, 0x02, 0x80, 0x00
-    // Outer: [0] EXPLICIT (SpcPeImageData.file) = 0xA0, 0x04, 0xA2, 0x02, 0x80, 0x00
-    let file: Vec<u8> = vec![0xA0, 0x04, 0xA2, 0x02, 0x80, 0x00];
+    // SpcLink.file = [2] EXPLICIT { SpcString.unicode = [0] IMPLICIT BMPString "<<<Obsolete>>>" }
+    // BMPString is UTF-16BE encoded: "<<<Obsolete>>>" = 14 chars = 28 bytes
+    let obsolete_bmp: Vec<u8> = "<<<Obsolete>>>"
+        .encode_utf16()
+        .flat_map(|ch| ch.to_be_bytes())
+        .collect();
+
+    // Inner: [0] IMPLICIT BMPString = tag 0x80 + length + content
+    let mut inner = vec![0x80];
+    inner.extend(asn1::encode_length(obsolete_bmp.len()));
+    inner.extend_from_slice(&obsolete_bmp);
+
+    // Wrapped: [2] EXPLICIT { inner }
+    let mut wrapped = vec![0xA2];
+    wrapped.extend(asn1::encode_length(inner.len()));
+    wrapped.extend_from_slice(&inner);
+
+    // Outer: [0] EXPLICIT (SpcPeImageData.file field)
+    let mut file = vec![0xA0];
+    file.extend(asn1::encode_length(wrapped.len()));
+    file.extend_from_slice(&wrapped);
 
     asn1::encode_sequence(&[&flags, &file])
 }
@@ -1052,6 +1072,16 @@ fn build_signed_attrs_content(
     // Always included for Authenticode compatibility — osslsigncode and Windows
     // signtool always emit this attribute, even when name/URL are empty.
     attrs.push(build_spc_sp_opus_info_attr(program_name, program_url));
+
+    // SpcStatementType — declares this as individual code signing.
+    // Matches signtool and osslsigncode behavior.
+    let spc_statement_type_attr = asn1::encode_sequence(&[
+        asn1::OID_SPC_STATEMENT_TYPE,
+        &asn1::encode_set(&asn1::encode_sequence(&[
+            asn1::OID_SPC_INDIVIDUAL_SP_KEY_PURPOSE,
+        ])),
+    ]);
+    attrs.push(spc_statement_type_attr);
 
     // DER SET OF requires lexicographic sorting of encoded elements (X.690 §11.6)
     attrs.sort();
@@ -1955,8 +1985,8 @@ mod tests {
             None,
             &asn1::encode_utc_time_now(),
         );
-        // Should contain four SEQUENCE-tagged attributes:
-        // contentType, messageDigest, signingTime, CMSAlgorithmProtection
+        // Should contain five SEQUENCE-tagged attributes:
+        // contentType, messageDigest, signingTime, SpcSpOpusInfo, SpcStatementType
         let mut count = 0;
         let mut pos = 0;
         while pos < attrs.len() {
@@ -1968,7 +1998,7 @@ mod tests {
                 pos += 1;
             }
         }
-        assert_eq!(count, 4, "Expected 4 signed attributes");
+        assert_eq!(count, 5, "Expected 5 signed attributes");
     }
 
     #[test]
@@ -1981,7 +2011,7 @@ mod tests {
             None,
             &asn1::encode_utc_time_now(),
         );
-        // Should also contain four attributes for ECDSA
+        // Should also contain five attributes for ECDSA
         let mut count = 0;
         let mut pos = 0;
         while pos < attrs.len() {
@@ -1993,7 +2023,7 @@ mod tests {
                 pos += 1;
             }
         }
-        assert_eq!(count, 4, "Expected 4 signed attributes for ECDSA");
+        assert_eq!(count, 5, "Expected 5 signed attributes for ECDSA");
     }
 
     #[test]
@@ -2007,8 +2037,8 @@ mod tests {
             Some("https://quantumnexum.com/spork"),
             &time,
         );
-        // Should contain 4 attributes: contentType, messageDigest, signingTime, SpcSpOpusInfo
-        // (SpcSpOpusInfo is always included; with name/URL it has non-empty content)
+        // Should contain 5 attributes: contentType, messageDigest, signingTime,
+        // SpcSpOpusInfo, SpcStatementType
         let mut count = 0;
         let mut pos = 0;
         while pos < attrs.len() {
@@ -2020,7 +2050,7 @@ mod tests {
                 pos += 1;
             }
         }
-        assert_eq!(count, 4, "Expected 4 signed attributes with SpcSpOpusInfo");
+        assert_eq!(count, 5, "Expected 5 signed attributes with SpcSpOpusInfo");
     }
 
     #[test]

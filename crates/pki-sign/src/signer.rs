@@ -999,9 +999,23 @@ pub fn sign_pe_bytes(data: &[u8], credentials: &SigningCredentials) -> SignResul
         ));
     }
 
+    // Pad data to 8-byte alignment before hashing.
+    // embed_signature() pads to 8-byte alignment before the cert table.
+    // Verifiers compute: hash(file[0 .. file_size - cert_table_size]),
+    // which includes alignment padding. We must hash the same bytes.
+    let aligned_len = (data.len() + 7) & !7;
+    let sign_data: std::borrow::Cow<'_, [u8]> = if aligned_len != data.len() {
+        let mut v = data.to_vec();
+        v.resize(aligned_len, 0);
+        std::borrow::Cow::Owned(v)
+    } else {
+        std::borrow::Cow::Borrowed(data)
+    };
+
+    let pe_info = pe::PeInfo::parse(&sign_data)?;
     let signing_alg = credentials.signing_algorithm();
     let digest_alg = signing_alg.digest_algorithm();
-    let image_hash = pe::compute_authenticode_hash_with(data, &pe_info, digest_alg)?;
+    let image_hash = pe::compute_authenticode_hash_with(&sign_data, &pe_info, digest_alg)?;
 
     let mut builder = Pkcs7Builder::new(credentials.signer_cert_der.clone(), image_hash);
     builder.with_algorithm(signing_alg);
@@ -1012,7 +1026,7 @@ pub fn sign_pe_bytes(data: &[u8], credentials: &SigningCredentials) -> SignResul
 
     let pkcs7_der = builder.build(|signed_attrs_der| credentials.sign_data(signed_attrs_der))?;
 
-    pe::embed_signature(data, &pe_info, &pkcs7_der)
+    pe::embed_signature(&sign_data, &pe_info, &pkcs7_der)
 }
 
 /// RFC 5280 §4.2.1.3: Validate that a signing certificate's keyUsage extension,
@@ -1630,6 +1644,9 @@ mod tests {
     /// Creates a PE with MZ header, PE signature, COFF header, optional header
     /// with 16 data directories, and one section. The section raw data is placed
     /// at offset 0x200 with size 0x200, making end_of_image = 0x400.
+    ///
+    /// All required Windows PE optional header fields are populated so Windows
+    /// recognizes this as a valid executable before checking the signature.
     fn build_test_pe() -> Vec<u8> {
         let mut pe = vec![0u8; 0x400]; // 1024 bytes total
 
@@ -1660,12 +1677,38 @@ mod tests {
         // Optional header at 0x98
         pe[0x98] = 0x0B; // PE32 magic
         pe[0x99] = 0x01;
+
+        // ── Required Windows PE fields ──
+        // Without these, Windows may reject the PE as malformed before
+        // checking the Authenticode signature.
+
+        // SectionAlignment at opt+32 = 0x98+32 = 0xB8
+        pe[0xB8..0xBC].copy_from_slice(&0x1000u32.to_le_bytes());
+        // FileAlignment at opt+36 = 0x98+36 = 0xBC
+        pe[0xBC..0xC0].copy_from_slice(&0x0200u32.to_le_bytes());
+        // MajorOperatingSystemVersion at opt+40 = 0xC0
+        pe[0xC0..0xC2].copy_from_slice(&6u16.to_le_bytes());
+        // MajorSubsystemVersion at opt+44 = 0xC4
+        pe[0xC4..0xC6].copy_from_slice(&6u16.to_le_bytes());
+        // ImageBase at opt+28 = 0x98+28 = 0xB4
+        pe[0xB4..0xB8].copy_from_slice(&0x0040_0000u32.to_le_bytes());
+        // SizeOfImage at opt+56 = 0x98+56 = 0xD0
+        pe[0xD0..0xD4].copy_from_slice(&0x2000u32.to_le_bytes());
         // SizeOfHeaders at opt+60 = 0x98+60 = 0xD4
-        pe[0xD4] = 0x00;
-        pe[0xD5] = 0x02; // 0x200
+        pe[0xD4..0xD8].copy_from_slice(&0x0200u32.to_le_bytes());
+        // Subsystem at opt+68 = 0x98+68 = 0xDC
+        pe[0xDC..0xDE].copy_from_slice(&3u16.to_le_bytes()); // IMAGE_SUBSYSTEM_WINDOWS_CONSOLE
+                                                             // SizeOfStackReserve at opt+72 = 0x98+72 = 0xE0
+        pe[0xE0..0xE4].copy_from_slice(&0x0010_0000u32.to_le_bytes());
+        // SizeOfStackCommit at opt+76 = 0x98+76 = 0xE4
+        pe[0xE4..0xE8].copy_from_slice(&0x1000u32.to_le_bytes());
+        // SizeOfHeapReserve at opt+80 = 0x98+80 = 0xE8
+        pe[0xE8..0xEC].copy_from_slice(&0x0010_0000u32.to_le_bytes());
+        // SizeOfHeapCommit at opt+84 = 0x98+84 = 0xEC
+        pe[0xEC..0xF0].copy_from_slice(&0x1000u32.to_le_bytes());
 
         // NumberOfRvaAndSizes at opt+92 = 0x98+92 = 0xF4
-        pe[0xF4] = 16; // 16 data directories
+        pe[0xF4..0xF8].copy_from_slice(&16u32.to_le_bytes());
 
         // Certificate table is data directory index 4 at opt+96+4*8 = 0x98+96+32 = 0x118
         // Leave zeroed (unsigned)
@@ -1677,12 +1720,16 @@ mod tests {
         pe[0x17A] = b'e';
         pe[0x17B] = b'x';
         pe[0x17C] = b't';
+        // VirtualSize at section+8 = 0x178+8 = 0x180
+        pe[0x180..0x184].copy_from_slice(&0x0200u32.to_le_bytes());
+        // VirtualAddress at section+12 = 0x178+12 = 0x184
+        pe[0x184..0x188].copy_from_slice(&0x1000u32.to_le_bytes());
         // SizeOfRawData at section+16 = 0x178+16 = 0x188
-        pe[0x188] = 0x00;
-        pe[0x189] = 0x02; // 0x200 = 512 bytes
-                          // PointerToRawData at section+20 = 0x178+20 = 0x18C
-        pe[0x18C] = 0x00;
-        pe[0x18D] = 0x02; // starts at 0x200
+        pe[0x188..0x18C].copy_from_slice(&0x0200u32.to_le_bytes());
+        // PointerToRawData at section+20 = 0x178+20 = 0x18C
+        pe[0x18C..0x190].copy_from_slice(&0x0200u32.to_le_bytes());
+        // Characteristics at section+36 = 0x178+36 = 0x19C
+        pe[0x19C..0x1A0].copy_from_slice(&0x6000_0020u32.to_le_bytes()); // CODE | EXECUTE | READ
 
         // Fill section data with non-zero bytes to make a meaningful hash
         for (i, byte) in pe[0x200..0x400].iter_mut().enumerate() {
@@ -2536,6 +2583,828 @@ mod tests {
         assert!(
             !combined.contains("no matching choice type"),
             "SpcLink CHOICE encoding is wrong:\n{combined}"
+        );
+    }
+
+    // ── E2E Cross-Verification with osslsigncode ──
+
+    /// Helper: run osslsigncode verify and return combined stdout+stderr.
+    fn osslsigncode_verify(pe_path: &std::path::Path) -> String {
+        let output = std::process::Command::new("osslsigncode")
+            .arg("verify")
+            .arg(pe_path)
+            .output()
+            .expect("run osslsigncode");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        format!("{stdout}\n{stderr}")
+    }
+
+    /// Helper: extract a field value from osslsigncode output.
+    fn osslsigncode_field<'a>(output: &'a str, field: &str) -> Option<&'a str> {
+        output
+            .lines()
+            .find(|l| l.contains(field))
+            .map(|l| l.split(':').next_back().unwrap_or("").trim())
+    }
+
+    /// Helper: assert osslsigncode digest match and return current digest.
+    fn assert_osslsigncode_digests_match(output: &str, label: &str) -> String {
+        let current = osslsigncode_field(output, "Current message digest")
+            .unwrap_or_else(|| panic!("{label}: osslsigncode should parse signature:\n{output}"));
+        let calculated = osslsigncode_field(output, "Calculated message digest")
+            .unwrap_or_else(|| panic!("{label}: no calculated digest:\n{output}"));
+        assert_eq!(current, calculated, "{label}: Authenticode digest mismatch");
+        assert!(
+            !output.contains("no matching choice type"),
+            "{label}: SpcLink CHOICE encoding error:\n{output}"
+        );
+        current.to_string()
+    }
+
+    /// Helper: sign a PE with osslsigncode using key/cert files extracted from PFX.
+    fn osslsigncode_sign_with_hash(
+        pe_path: &std::path::Path,
+        key_path: &std::path::Path,
+        cert_path: &std::path::Path,
+        out_path: &std::path::Path,
+        hash_alg: &str,
+    ) {
+        let output = std::process::Command::new("osslsigncode")
+            .arg("sign")
+            .arg("-certs")
+            .arg(cert_path)
+            .arg("-key")
+            .arg(key_path)
+            .arg("-h")
+            .arg(hash_alg)
+            .arg("-in")
+            .arg(pe_path)
+            .arg("-out")
+            .arg(out_path)
+            .output()
+            .expect("run osslsigncode sign");
+        assert!(
+            output.status.success(),
+            "osslsigncode sign failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    /// Helper: sign a PE with osslsigncode using SHA-256 (default).
+    fn osslsigncode_sign(
+        pe_path: &std::path::Path,
+        key_path: &std::path::Path,
+        cert_path: &std::path::Path,
+        out_path: &std::path::Path,
+    ) {
+        osslsigncode_sign_with_hash(pe_path, key_path, cert_path, out_path, "sha256");
+    }
+
+    /// Helper: extract key/cert PEM files from a PFX for osslsigncode.
+    fn extract_pfx_to_pem(
+        pfx_path: &std::path::Path,
+        password: &str,
+        dir: &std::path::Path,
+    ) -> (std::path::PathBuf, std::path::PathBuf) {
+        let key_path = dir.join("extracted.key");
+        let cert_path = dir.join("extracted.crt");
+
+        let key_out = std::process::Command::new("openssl")
+            .args(["pkcs12", "-legacy", "-in"])
+            .arg(pfx_path)
+            .args(["-nocerts", "-nodes", "-passin"])
+            .arg(format!("pass:{password}"))
+            .arg("-out")
+            .arg(&key_path)
+            .output()
+            .expect("extract key from PFX");
+        assert!(
+            key_out.status.success(),
+            "key extraction failed: {}",
+            String::from_utf8_lossy(&key_out.stderr)
+        );
+
+        let cert_out = std::process::Command::new("openssl")
+            .args(["pkcs12", "-legacy", "-in"])
+            .arg(pfx_path)
+            .args(["-nokeys", "-passin"])
+            .arg(format!("pass:{password}"))
+            .arg("-out")
+            .arg(&cert_path)
+            .output()
+            .expect("extract cert from PFX");
+        assert!(
+            cert_out.status.success(),
+            "cert extraction failed: {}",
+            String::from_utf8_lossy(&cert_out.stderr)
+        );
+
+        (key_path, cert_path)
+    }
+
+    fn skip_if_no_osslsigncode() -> bool {
+        std::process::Command::new("osslsigncode")
+            .arg("--version")
+            .output()
+            .is_err()
+    }
+
+    /// E2E: Sign PE with pki-sign, verify PE hash matches osslsigncode computation.
+    /// Then sign same PE with osslsigncode and verify BOTH produce the same PE hash.
+    #[test]
+    fn e2e_cross_verify_pe_hash_rsa2048() {
+        if skip_if_no_osslsigncode() {
+            eprintln!("skipping: osslsigncode not available");
+            return;
+        }
+        let dir = tempfile::tempdir().expect("tempdir");
+        let pfx_path = fixture_pfx("rsa2048.pfx");
+        let creds = SigningCredentials::from_pfx(&pfx_path, "test").expect("load PFX");
+        let (key_path, cert_path) = extract_pfx_to_pem(&pfx_path, "test", dir.path());
+
+        let pe_data = build_test_pe();
+
+        // Write unsigned PE for osslsigncode
+        let unsigned_path = dir.path().join("unsigned.exe");
+        std::fs::write(&unsigned_path, &pe_data).expect("write unsigned");
+
+        // Sign with pki-sign
+        let signed_pe = sign_pe_bytes(&pe_data, &creds).expect("pki-sign PE");
+        let pki_signed_path = dir.path().join("pki-signed.exe");
+        std::fs::write(&pki_signed_path, &signed_pe).expect("write pki-signed");
+
+        // Sign with osslsigncode
+        let ossl_signed_path = dir.path().join("ossl-signed.exe");
+        osslsigncode_sign(&unsigned_path, &key_path, &cert_path, &ossl_signed_path);
+
+        // Verify both with osslsigncode
+        let pki_output = osslsigncode_verify(&pki_signed_path);
+        let ossl_output = osslsigncode_verify(&ossl_signed_path);
+
+        let pki_digest = assert_osslsigncode_digests_match(&pki_output, "pki-sign RSA-2048");
+        let ossl_digest = assert_osslsigncode_digests_match(&ossl_output, "osslsigncode RSA-2048");
+
+        // The PE hash MUST match — both tools hash the same unsigned PE
+        assert_eq!(
+            pki_digest, ossl_digest,
+            "PE hash mismatch: pki-sign and osslsigncode compute different Authenticode hashes"
+        );
+    }
+
+    /// E2E: Cross-verify ECDSA P-256 PE signatures.
+    #[test]
+    fn e2e_cross_verify_pe_hash_ecdsa_p256() {
+        if skip_if_no_osslsigncode() {
+            eprintln!("skipping: osslsigncode not available");
+            return;
+        }
+        let dir = tempfile::tempdir().expect("tempdir");
+        let pfx_path = fixture_pfx("ecdsa-p256.pfx");
+        let creds = SigningCredentials::from_pfx(&pfx_path, "test").expect("load PFX");
+        let (key_path, cert_path) = extract_pfx_to_pem(&pfx_path, "test", dir.path());
+
+        let pe_data = build_test_pe();
+        let unsigned_path = dir.path().join("unsigned.exe");
+        std::fs::write(&unsigned_path, &pe_data).expect("write unsigned");
+
+        // Sign with pki-sign
+        let signed_pe = sign_pe_bytes(&pe_data, &creds).expect("pki-sign ECDSA");
+        let pki_signed_path = dir.path().join("pki-signed.exe");
+        std::fs::write(&pki_signed_path, &signed_pe).expect("write pki-signed");
+
+        // Sign with osslsigncode
+        let ossl_signed_path = dir.path().join("ossl-signed.exe");
+        osslsigncode_sign(&unsigned_path, &key_path, &cert_path, &ossl_signed_path);
+
+        // Verify both
+        let pki_output = osslsigncode_verify(&pki_signed_path);
+        let ossl_output = osslsigncode_verify(&ossl_signed_path);
+
+        let pki_digest = assert_osslsigncode_digests_match(&pki_output, "pki-sign ECDSA-P256");
+        let ossl_digest =
+            assert_osslsigncode_digests_match(&ossl_output, "osslsigncode ECDSA-P256");
+
+        assert_eq!(
+            pki_digest, ossl_digest,
+            "PE hash mismatch: ECDSA P-256 Authenticode hashes differ"
+        );
+    }
+
+    /// E2E: Cross-verify ECDSA P-384 PE signatures.
+    /// P-384 uses SHA-384 as the Authenticode digest algorithm.
+    #[test]
+    fn e2e_cross_verify_pe_hash_ecdsa_p384() {
+        if skip_if_no_osslsigncode() {
+            eprintln!("skipping: osslsigncode not available");
+            return;
+        }
+        let dir = tempfile::tempdir().expect("tempdir");
+        let pfx_path = fixture_pfx("ecdsa-p384.pfx");
+        let creds = SigningCredentials::from_pfx(&pfx_path, "test").expect("load PFX");
+        let (key_path, cert_path) = extract_pfx_to_pem(&pfx_path, "test", dir.path());
+
+        let pe_data = build_test_pe();
+        let unsigned_path = dir.path().join("unsigned.exe");
+        std::fs::write(&unsigned_path, &pe_data).expect("write unsigned");
+
+        let signed_pe = sign_pe_bytes(&pe_data, &creds).expect("pki-sign ECDSA-P384");
+        let pki_signed_path = dir.path().join("pki-signed.exe");
+        std::fs::write(&pki_signed_path, &signed_pe).expect("write pki-signed");
+
+        // pki-sign uses SHA-384 for ECDSA-P384, so tell osslsigncode to match
+        let ossl_signed_path = dir.path().join("ossl-signed.exe");
+        osslsigncode_sign_with_hash(
+            &unsigned_path,
+            &key_path,
+            &cert_path,
+            &ossl_signed_path,
+            "sha384",
+        );
+
+        let pki_output = osslsigncode_verify(&pki_signed_path);
+        let ossl_output = osslsigncode_verify(&ossl_signed_path);
+
+        let pki_digest = assert_osslsigncode_digests_match(&pki_output, "pki-sign ECDSA-P384");
+        let ossl_digest =
+            assert_osslsigncode_digests_match(&ossl_output, "osslsigncode ECDSA-P384");
+
+        assert_eq!(
+            pki_digest, ossl_digest,
+            "PE hash mismatch: ECDSA P-384 Authenticode hashes differ"
+        );
+    }
+
+    /// E2E: Cross-verify RSA-4096 PE signatures.
+    #[test]
+    fn e2e_cross_verify_pe_hash_rsa4096() {
+        if skip_if_no_osslsigncode() {
+            eprintln!("skipping: osslsigncode not available");
+            return;
+        }
+        let dir = tempfile::tempdir().expect("tempdir");
+        let pfx_path = fixture_pfx("rsa4096.pfx");
+        let creds = SigningCredentials::from_pfx(&pfx_path, "test").expect("load PFX");
+        let (key_path, cert_path) = extract_pfx_to_pem(&pfx_path, "test", dir.path());
+
+        let pe_data = build_test_pe();
+        let unsigned_path = dir.path().join("unsigned.exe");
+        std::fs::write(&unsigned_path, &pe_data).expect("write unsigned");
+
+        let signed_pe = sign_pe_bytes(&pe_data, &creds).expect("pki-sign RSA-4096");
+        let pki_signed_path = dir.path().join("pki-signed.exe");
+        std::fs::write(&pki_signed_path, &signed_pe).expect("write pki-signed");
+
+        let ossl_signed_path = dir.path().join("ossl-signed.exe");
+        osslsigncode_sign(&unsigned_path, &key_path, &cert_path, &ossl_signed_path);
+
+        let pki_output = osslsigncode_verify(&pki_signed_path);
+        let ossl_output = osslsigncode_verify(&ossl_signed_path);
+
+        let pki_digest = assert_osslsigncode_digests_match(&pki_output, "pki-sign RSA-4096");
+        let ossl_digest = assert_osslsigncode_digests_match(&ossl_output, "osslsigncode RSA-4096");
+
+        assert_eq!(
+            pki_digest, ossl_digest,
+            "PE hash mismatch: RSA-4096 Authenticode hashes differ"
+        );
+    }
+
+    /// E2E: Non-8-byte-aligned PE — verify padding doesn't break hash.
+    #[test]
+    fn e2e_cross_verify_unaligned_pe() {
+        if skip_if_no_osslsigncode() {
+            eprintln!("skipping: osslsigncode not available");
+            return;
+        }
+        let dir = tempfile::tempdir().expect("tempdir");
+        let pfx_path = fixture_pfx("rsa2048.pfx");
+        let creds = SigningCredentials::from_pfx(&pfx_path, "test").expect("load PFX");
+        let (key_path, cert_path) = extract_pfx_to_pem(&pfx_path, "test", dir.path());
+
+        // Build a PE that is NOT 8-byte aligned (1024 + 3 = 1027 bytes)
+        let mut pe_data = build_test_pe();
+        pe_data.extend_from_slice(&[0xCC; 3]); // make it 1027 bytes
+
+        // Update section SizeOfRawData to cover the extra bytes
+        // SizeOfRawData at offset 0x188 — increase from 0x200 to 0x203
+        pe_data[0x188] = 0x03;
+        pe_data[0x189] = 0x02;
+
+        let unsigned_path = dir.path().join("unaligned.exe");
+        std::fs::write(&unsigned_path, &pe_data).expect("write unsigned");
+
+        // Sign with pki-sign
+        let signed_pe = sign_pe_bytes(&pe_data, &creds).expect("pki-sign unaligned PE");
+        let pki_signed_path = dir.path().join("pki-signed.exe");
+        std::fs::write(&pki_signed_path, &signed_pe).expect("write pki-signed");
+
+        // Sign with osslsigncode
+        let ossl_signed_path = dir.path().join("ossl-signed.exe");
+        osslsigncode_sign(&unsigned_path, &key_path, &cert_path, &ossl_signed_path);
+
+        // Verify both
+        let pki_output = osslsigncode_verify(&pki_signed_path);
+        let ossl_output = osslsigncode_verify(&ossl_signed_path);
+
+        let pki_digest = assert_osslsigncode_digests_match(&pki_output, "pki-sign unaligned");
+        let ossl_digest = assert_osslsigncode_digests_match(&ossl_output, "osslsigncode unaligned");
+
+        assert_eq!(
+            pki_digest, ossl_digest,
+            "PE hash mismatch on non-8-byte-aligned PE: padding bug"
+        );
+    }
+
+    /// E2E: Verify SpcIndirectDataContent structure matches osslsigncode byte-for-byte.
+    #[test]
+    fn e2e_spc_indirect_data_matches_osslsigncode() {
+        if skip_if_no_osslsigncode() {
+            eprintln!("skipping: osslsigncode not available");
+            return;
+        }
+        let dir = tempfile::tempdir().expect("tempdir");
+        let pfx_path = fixture_pfx("rsa2048.pfx");
+        let creds = SigningCredentials::from_pfx(&pfx_path, "test").expect("load PFX");
+        let (key_path, cert_path) = extract_pfx_to_pem(&pfx_path, "test", dir.path());
+
+        let pe_data = build_test_pe();
+        let unsigned_path = dir.path().join("unsigned.exe");
+        std::fs::write(&unsigned_path, &pe_data).expect("write unsigned");
+
+        // Sign with both tools
+        let signed_pe = sign_pe_bytes(&pe_data, &creds).expect("pki-sign");
+        let pki_signed_path = dir.path().join("pki-signed.exe");
+        std::fs::write(&pki_signed_path, &signed_pe).expect("write pki-signed");
+
+        let ossl_signed_path = dir.path().join("ossl-signed.exe");
+        osslsigncode_sign(&unsigned_path, &key_path, &cert_path, &ossl_signed_path);
+
+        // Extract SpcIndirectDataContent from both
+        let pki_spc = extract_spc_indirect_data(&signed_pe);
+        let ossl_data = std::fs::read(&ossl_signed_path).expect("read ossl-signed");
+        let ossl_spc = extract_spc_indirect_data(&ossl_data);
+
+        // The SpcIndirectDataContent structures must be identical
+        // (same PE hash, same SpcPeImageData encoding, same digest algorithm)
+        assert_eq!(
+            pki_spc,
+            ossl_spc,
+            "SpcIndirectDataContent differs between pki-sign and osslsigncode.\n\
+             pki-sign ({} bytes): {:02X?}\n\
+             osslsigncode ({} bytes): {:02X?}",
+            pki_spc.len(),
+            &pki_spc[..std::cmp::min(40, pki_spc.len())],
+            ossl_spc.len(),
+            &ossl_spc[..std::cmp::min(40, ossl_spc.len())]
+        );
+    }
+
+    /// E2E: Verify osslsigncode sees SpcStatementType in our signed attributes.
+    #[test]
+    fn e2e_spc_statement_type_present() {
+        if skip_if_no_osslsigncode() {
+            eprintln!("skipping: osslsigncode not available");
+            return;
+        }
+        let dir = tempfile::tempdir().expect("tempdir");
+        let pfx_path = fixture_pfx("rsa2048.pfx");
+        let creds = SigningCredentials::from_pfx(&pfx_path, "test").expect("load PFX");
+
+        let pe_data = build_test_pe();
+        let signed_pe = sign_pe_bytes(&pe_data, &creds).expect("pki-sign");
+        let pe_path = dir.path().join("signed.exe");
+        std::fs::write(&pe_path, &signed_pe).expect("write signed PE");
+
+        let output = osslsigncode_verify(&pe_path);
+        assert!(
+            output.contains("Microsoft Individual Code Signing"),
+            "SpcStatementType not detected by osslsigncode:\n{output}"
+        );
+    }
+
+    /// E2E: Verify our verifier accepts osslsigncode-signed PE files.
+    #[test]
+    fn e2e_our_verifier_accepts_osslsigncode_pe() {
+        if skip_if_no_osslsigncode() {
+            eprintln!("skipping: osslsigncode not available");
+            return;
+        }
+        let dir = tempfile::tempdir().expect("tempdir");
+        let pfx_path = fixture_pfx("rsa2048.pfx");
+        let (key_path, cert_path) = extract_pfx_to_pem(&pfx_path, "test", dir.path());
+
+        let pe_data = build_test_pe();
+        let unsigned_path = dir.path().join("unsigned.exe");
+        std::fs::write(&unsigned_path, &pe_data).expect("write unsigned");
+
+        // Sign with osslsigncode
+        let ossl_signed_path = dir.path().join("ossl-signed.exe");
+        osslsigncode_sign(&unsigned_path, &key_path, &cert_path, &ossl_signed_path);
+
+        // Verify with our verifier
+        let result = crate::verifier::verify_file(&ossl_signed_path)
+            .expect("our verifier should parse osslsigncode-signed PE");
+        assert!(
+            result.signature_valid,
+            "our verifier should accept osslsigncode signature: computed={} signed={}",
+            result.computed_digest, result.signed_digest
+        );
+    }
+
+    /// E2E: Verify our verifier accepts our own signed PE files.
+    #[test]
+    fn e2e_our_verifier_accepts_our_pe() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let pfx_path = fixture_pfx("rsa2048.pfx");
+        let creds = SigningCredentials::from_pfx(&pfx_path, "test").expect("load PFX");
+
+        let pe_data = build_test_pe();
+        let signed_pe = sign_pe_bytes(&pe_data, &creds).expect("sign PE");
+        let pe_path = dir.path().join("signed.exe");
+        std::fs::write(&pe_path, &signed_pe).expect("write signed PE");
+
+        let result =
+            crate::verifier::verify_file(&pe_path).expect("verifier should parse our signed PE");
+        assert!(
+            result.signature_valid,
+            "our verifier should accept our own signature: computed={} signed={}",
+            result.computed_digest, result.signed_digest
+        );
+    }
+
+    /// Helper: extract SpcIndirectDataContent DER from a signed PE.
+    fn extract_spc_indirect_data(signed_pe: &[u8]) -> Vec<u8> {
+        use crate::pkcs7::asn1;
+
+        let pe_info = super::pe::PeInfo::parse(signed_pe).expect("parse PE");
+        let cert_start = pe_info.cert_table_rva as usize + 8;
+        let cert_end = pe_info.cert_table_rva as usize + pe_info.cert_table_size as usize;
+        let pkcs7 = &signed_pe[cert_start..cert_end];
+
+        // Navigate: ContentInfo SEQUENCE → skip OID → [0] EXPLICIT → SignedData SEQUENCE →
+        //   skip version → skip digestAlgorithms → inner ContentInfo SEQUENCE →
+        //   skip SPC OID → [0] EXPLICIT → SpcIndirectDataContent
+        let (_, ci_content) = asn1::parse_tlv(pkcs7).expect("parse ContentInfo");
+        let (_, remaining) = asn1::skip_tlv(ci_content).expect("skip OID");
+        let (_, explicit0) = asn1::parse_tlv(remaining).expect("parse [0]");
+        let (_, sd_content) = asn1::parse_tlv(explicit0).expect("parse SignedData");
+        let (_, after_ver) = asn1::skip_tlv(sd_content).expect("skip version");
+        let (_, after_da) = asn1::skip_tlv(after_ver).expect("skip digestAlgorithms");
+        // Inner ContentInfo with SPC_INDIRECT_DATA
+        let (_, inner_ci) = asn1::parse_tlv(after_da).expect("parse inner ContentInfo");
+        let (_, after_oid) = asn1::skip_tlv(inner_ci).expect("skip SPC OID");
+        // [0] EXPLICIT wrapping SpcIndirectDataContent
+        let (_, explicit_content) = asn1::parse_tlv(after_oid).expect("parse [0] EXPLICIT");
+        // explicit_content IS the SpcIndirectDataContent (full content of [0] EXPLICIT)
+        // skip_tlv gives us the remaining bytes after the SEQUENCE TLV
+        let (_, after_spc) = asn1::skip_tlv(explicit_content).expect("skip SPC SEQUENCE");
+        let spc_tlv_len = explicit_content.len() - after_spc.len();
+        explicit_content[..spc_tlv_len].to_vec()
+    }
+
+    /// Helper: extract the raw PKCS#7 DER blob from a signed PE.
+    fn extract_pkcs7_from_pe(signed_pe: &[u8]) -> Vec<u8> {
+        let pe_info = super::pe::PeInfo::parse(signed_pe).expect("parse PE");
+        let cert_start = pe_info.cert_table_rva as usize + 8; // skip WIN_CERTIFICATE header
+        let cert_end = pe_info.cert_table_rva as usize + pe_info.cert_table_size as usize;
+        signed_pe[cert_start..cert_end].to_vec()
+    }
+
+    /// Helper: recursively walk ASN.1 TLV tree depth-first and collect (depth, tag, length, content_bytes).
+    fn walk_asn1_tree(data: &[u8], depth: usize, out: &mut Vec<(usize, u8, usize, Vec<u8>)>) {
+        let mut pos = 0;
+        while pos < data.len() {
+            if pos >= data.len() {
+                break;
+            }
+            let tag = data[pos];
+            pos += 1;
+            if pos >= data.len() {
+                break;
+            }
+
+            // Parse length
+            let (length, len_size) = if data[pos] < 0x80 {
+                (data[pos] as usize, 1)
+            } else {
+                let num_bytes = (data[pos] & 0x7F) as usize;
+                if num_bytes == 0 || pos + 1 + num_bytes > data.len() {
+                    break;
+                }
+                let mut len: usize = 0;
+                for i in 0..num_bytes {
+                    len = (len << 8) | data[pos + 1 + i] as usize;
+                }
+                (len, 1 + num_bytes)
+            };
+            pos += len_size;
+
+            if pos + length > data.len() {
+                break;
+            }
+
+            let content = &data[pos..pos + length];
+            out.push((depth, tag, length, content.to_vec()));
+
+            // Recurse into constructed types (bit 5 set) — SEQUENCE, SET, context tags
+            let is_constructed = (tag & 0x20) != 0;
+            if is_constructed {
+                walk_asn1_tree(content, depth + 1, out);
+            }
+
+            pos += length;
+        }
+    }
+
+    /// Step 1: ASN.1 tree comparison between pki-sign and osslsigncode PKCS#7 blobs.
+    ///
+    /// Walks both trees depth-first and reports the first structural divergence.
+    #[test]
+    fn e2e_asn1_tree_comparison_pkcs7() {
+        if skip_if_no_osslsigncode() {
+            eprintln!("skipping: osslsigncode not available");
+            return;
+        }
+        let dir = tempfile::tempdir().expect("tempdir");
+        let pfx_path = fixture_pfx("rsa2048.pfx");
+        let creds = SigningCredentials::from_pfx(&pfx_path, "test").expect("load PFX");
+        let (key_path, cert_path) = extract_pfx_to_pem(&pfx_path, "test", dir.path());
+
+        let pe_data = build_test_pe();
+        let unsigned_path = dir.path().join("unsigned.exe");
+        std::fs::write(&unsigned_path, &pe_data).expect("write unsigned");
+
+        // Sign with pki-sign
+        let pki_signed = sign_pe_bytes(&pe_data, &creds).expect("pki-sign");
+        let pki_pkcs7 = extract_pkcs7_from_pe(&pki_signed);
+
+        // Sign with osslsigncode
+        let ossl_signed_path = dir.path().join("ossl-signed.exe");
+        osslsigncode_sign(&unsigned_path, &key_path, &cert_path, &ossl_signed_path);
+        let ossl_signed = std::fs::read(&ossl_signed_path).expect("read ossl-signed");
+        let ossl_pkcs7 = extract_pkcs7_from_pe(&ossl_signed);
+
+        // Walk both ASN.1 trees
+        let mut pki_tree = Vec::new();
+        let mut ossl_tree = Vec::new();
+        walk_asn1_tree(&pki_pkcs7, 0, &mut pki_tree);
+        walk_asn1_tree(&ossl_pkcs7, 0, &mut ossl_tree);
+
+        // Compare structural elements (tag + length at each depth)
+        // Skip content comparison for signature values (OCTET STRING containing
+        // the actual RSA signature, timestamps, signingTime) since those differ.
+        // Focus on: structure tags, SpcIndirectDataContent, SpcPeImageData.
+        let mut divergences = Vec::new();
+        let max_compare = std::cmp::min(pki_tree.len(), ossl_tree.len());
+
+        for i in 0..max_compare {
+            let (pd, pt, pl, pc) = &pki_tree[i];
+            let (od, ot, ol, oc) = &ossl_tree[i];
+            if pd != od || pt != ot {
+                divergences.push(format!(
+                    "Node {i}: pki-sign(depth={pd}, tag=0x{pt:02X}, len={pl}) vs \
+                     osslsigncode(depth={od}, tag=0x{ot:02X}, len={ol})"
+                ));
+            } else if pl != ol {
+                // Same tag but different length — only flag for structural elements
+                // Skip leaf values like INTEGER (serial), OCTET STRING (signature), UTCTime
+                let is_constructed = (*pt & 0x20) != 0;
+                if is_constructed {
+                    divergences.push(format!(
+                        "Node {i}: tag=0x{pt:02X} depth={pd}, pki-sign len={pl} vs osslsigncode len={ol}"
+                    ));
+                }
+            } else if pc != oc {
+                // Same tag+length but different content — flag OIDs and BIT STRINGs
+                if *pt == 0x06 || *pt == 0x03 {
+                    divergences.push(format!(
+                        "Node {i}: tag=0x{pt:02X} depth={pd} len={pl}, content differs:\n  \
+                         pki:  {pc:02X?}\n  ossl: {oc:02X?}"
+                    ));
+                }
+            }
+        }
+
+        if pki_tree.len() != ossl_tree.len() {
+            divergences.push(format!(
+                "Tree size: pki-sign has {} nodes vs osslsigncode has {} nodes",
+                pki_tree.len(),
+                ossl_tree.len()
+            ));
+        }
+
+        // Print all divergences for diagnostic purposes
+        if !divergences.is_empty() {
+            eprintln!("=== ASN.1 tree divergences (informational) ===");
+            for d in &divergences {
+                eprintln!("  {d}");
+            }
+            eprintln!("=== end divergences ===");
+        }
+
+        // The SpcIndirectDataContent must match (most critical for Windows)
+        let pki_spc = extract_spc_indirect_data(&pki_signed);
+        let ossl_spc = extract_spc_indirect_data(&ossl_signed);
+        assert_eq!(
+            pki_spc, ossl_spc,
+            "SpcIndirectDataContent differs — this is the most likely cause of Windows rejection"
+        );
+    }
+
+    /// Step 2: PE checksum comparison between pki-sign and osslsigncode.
+    #[test]
+    fn e2e_pe_checksum_matches_osslsigncode() {
+        if skip_if_no_osslsigncode() {
+            eprintln!("skipping: osslsigncode not available");
+            return;
+        }
+        let dir = tempfile::tempdir().expect("tempdir");
+        let pfx_path = fixture_pfx("rsa2048.pfx");
+        let creds = SigningCredentials::from_pfx(&pfx_path, "test").expect("load PFX");
+        let (key_path, cert_path) = extract_pfx_to_pem(&pfx_path, "test", dir.path());
+
+        let pe_data = build_test_pe();
+        let unsigned_path = dir.path().join("unsigned.exe");
+        std::fs::write(&unsigned_path, &pe_data).expect("write unsigned");
+
+        // Sign with pki-sign
+        let pki_signed = sign_pe_bytes(&pe_data, &creds).expect("pki-sign");
+
+        // Sign with osslsigncode
+        let ossl_signed_path = dir.path().join("ossl-signed.exe");
+        osslsigncode_sign(&unsigned_path, &key_path, &cert_path, &ossl_signed_path);
+        let ossl_signed = std::fs::read(&ossl_signed_path).expect("read ossl-signed");
+
+        // Extract PE checksum from both (at opt_header + 64)
+        let pki_pe_info = super::pe::PeInfo::parse(&pki_signed).expect("parse pki PE");
+        let ossl_pe_info = super::pe::PeInfo::parse(&ossl_signed).expect("parse ossl PE");
+
+        let pki_checksum = u32::from_le_bytes([
+            pki_signed[pki_pe_info.checksum_offset],
+            pki_signed[pki_pe_info.checksum_offset + 1],
+            pki_signed[pki_pe_info.checksum_offset + 2],
+            pki_signed[pki_pe_info.checksum_offset + 3],
+        ]);
+        let ossl_checksum = u32::from_le_bytes([
+            ossl_signed[ossl_pe_info.checksum_offset],
+            ossl_signed[ossl_pe_info.checksum_offset + 1],
+            ossl_signed[ossl_pe_info.checksum_offset + 2],
+            ossl_signed[ossl_pe_info.checksum_offset + 3],
+        ]);
+
+        // Checksums won't match exactly (different PKCS#7 blobs = different file sizes
+        // and content), but both must be non-zero and correctly computed.
+        assert_ne!(pki_checksum, 0, "pki-sign PE checksum is zero");
+        assert_ne!(ossl_checksum, 0, "osslsigncode PE checksum is zero");
+
+        // Verify our checksum is self-consistent: recompute and compare
+        let recomputed =
+            crate::pe::embed::compute_pe_checksum(&pki_signed, pki_pe_info.checksum_offset);
+        assert_eq!(
+            pki_checksum, recomputed,
+            "pki-sign PE checksum is not self-consistent"
+        );
+
+        // Compare WIN_CERTIFICATE headers
+        let pki_cert_rva = pki_pe_info.cert_table_rva as usize;
+        let ossl_cert_rva = ossl_pe_info.cert_table_rva as usize;
+
+        // wRevision
+        let pki_rev =
+            u16::from_le_bytes([pki_signed[pki_cert_rva + 4], pki_signed[pki_cert_rva + 5]]);
+        let ossl_rev = u16::from_le_bytes([
+            ossl_signed[ossl_cert_rva + 4],
+            ossl_signed[ossl_cert_rva + 5],
+        ]);
+        assert_eq!(pki_rev, ossl_rev, "WIN_CERTIFICATE wRevision mismatch");
+        assert_eq!(pki_rev, 0x0200, "wRevision should be 0x0200");
+
+        // wCertificateType
+        let pki_type =
+            u16::from_le_bytes([pki_signed[pki_cert_rva + 6], pki_signed[pki_cert_rva + 7]]);
+        let ossl_type = u16::from_le_bytes([
+            ossl_signed[ossl_cert_rva + 6],
+            ossl_signed[ossl_cert_rva + 7],
+        ]);
+        assert_eq!(
+            pki_type, ossl_type,
+            "WIN_CERTIFICATE wCertificateType mismatch"
+        );
+        assert_eq!(pki_type, 0x0002, "wCertificateType should be 0x0002");
+    }
+
+    /// Step 3: Validate our PKCS#7 blob with openssl asn1parse.
+    #[test]
+    fn e2e_openssl_asn1parse_accepts_our_pkcs7() {
+        if !has_openssl() {
+            eprintln!("skipping: openssl CLI not available");
+            return;
+        }
+        let dir = tempfile::tempdir().expect("tempdir");
+        let pfx_path = fixture_pfx("rsa2048.pfx");
+        let creds = SigningCredentials::from_pfx(&pfx_path, "test").expect("load PFX");
+
+        let pe_data = build_test_pe();
+        let signed_pe = sign_pe_bytes(&pe_data, &creds).expect("sign PE");
+        let pkcs7 = extract_pkcs7_from_pe(&signed_pe);
+
+        // Write PKCS#7 DER blob to file
+        let pkcs7_path = dir.path().join("signature.der");
+        std::fs::write(&pkcs7_path, &pkcs7).expect("write pkcs7");
+
+        // Run openssl asn1parse
+        let output = std::process::Command::new("openssl")
+            .args(["asn1parse", "-inform", "DER", "-in"])
+            .arg(&pkcs7_path)
+            .output()
+            .expect("run openssl asn1parse");
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+
+        assert!(
+            output.status.success(),
+            "openssl asn1parse failed on our PKCS#7 blob:\nstdout: {stdout}\nstderr: {stderr}"
+        );
+
+        // Verify key structures are present in the parse output
+        assert!(
+            stdout.contains("SEQUENCE") || stdout.contains("SET"),
+            "asn1parse output should contain ASN.1 structures:\n{stdout}"
+        );
+
+        // Also verify with openssl pkcs7 command
+        let pkcs7_output = std::process::Command::new("openssl")
+            .args(["pkcs7", "-inform", "DER", "-print_certs", "-noout", "-in"])
+            .arg(&pkcs7_path)
+            .output()
+            .expect("run openssl pkcs7");
+
+        assert!(
+            pkcs7_output.status.success(),
+            "openssl pkcs7 failed on our blob:\nstderr: {}",
+            String::from_utf8_lossy(&pkcs7_output.stderr)
+        );
+    }
+
+    /// Verify build_test_pe produces a PE with valid Windows header fields.
+    #[test]
+    fn test_pe_has_valid_windows_fields() {
+        let pe = build_test_pe();
+        let pe_info = super::pe::PeInfo::parse(&pe).expect("parse PE");
+
+        // opt_offset = pe_offset + 4 (COFF) + 20 = pe_offset + 24
+        let opt = pe_info.pe_offset + 24;
+
+        // SectionAlignment = 0x1000
+        let section_align =
+            u32::from_le_bytes([pe[opt + 32], pe[opt + 33], pe[opt + 34], pe[opt + 35]]);
+        assert_eq!(section_align, 0x1000, "SectionAlignment");
+
+        // FileAlignment = 0x200
+        let file_align =
+            u32::from_le_bytes([pe[opt + 36], pe[opt + 37], pe[opt + 38], pe[opt + 39]]);
+        assert_eq!(file_align, 0x200, "FileAlignment");
+
+        // ImageBase = 0x400000
+        let image_base =
+            u32::from_le_bytes([pe[opt + 28], pe[opt + 29], pe[opt + 30], pe[opt + 31]]);
+        assert_eq!(image_base, 0x0040_0000, "ImageBase");
+
+        // SizeOfImage = 0x2000
+        let size_of_image =
+            u32::from_le_bytes([pe[opt + 56], pe[opt + 57], pe[opt + 58], pe[opt + 59]]);
+        assert_eq!(size_of_image, 0x2000, "SizeOfImage");
+
+        // SizeOfHeaders = 0x200
+        let size_of_headers =
+            u32::from_le_bytes([pe[opt + 60], pe[opt + 61], pe[opt + 62], pe[opt + 63]]);
+        assert_eq!(size_of_headers, 0x200, "SizeOfHeaders");
+
+        // Subsystem = 3 (CONSOLE)
+        let subsystem = u16::from_le_bytes([pe[opt + 68], pe[opt + 69]]);
+        assert_eq!(subsystem, 3, "Subsystem");
+
+        // Section header should have VirtualAddress and Characteristics
+        let section_start = opt + pe_info.size_of_optional_header as usize;
+        let virtual_addr = u32::from_le_bytes([
+            pe[section_start + 12],
+            pe[section_start + 13],
+            pe[section_start + 14],
+            pe[section_start + 15],
+        ]);
+        assert_eq!(virtual_addr, 0x1000, "Section VirtualAddress");
+
+        let characteristics = u32::from_le_bytes([
+            pe[section_start + 36],
+            pe[section_start + 37],
+            pe[section_start + 38],
+            pe[section_start + 39],
+        ]);
+        assert_ne!(
+            characteristics, 0,
+            "Section Characteristics should be non-zero"
         );
     }
 }

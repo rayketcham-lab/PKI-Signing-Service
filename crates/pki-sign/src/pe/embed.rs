@@ -97,7 +97,7 @@ pub fn embed_signature(data: &[u8], pe_info: &PeInfo, pkcs7_der: &[u8]) -> SignR
 /// This is the standard PE checksum algorithm: sum all 16-bit words
 /// (excluding the checksum field itself), fold carry bits, then add
 /// the file length.
-fn compute_pe_checksum(data: &[u8], checksum_offset: usize) -> u32 {
+pub(crate) fn compute_pe_checksum(data: &[u8], checksum_offset: usize) -> u32 {
     let mut sum: u64 = 0;
 
     // Process as 16-bit little-endian words

@@ -178,8 +178,9 @@ pub async fn sign_ps1(
     // Compute original file hash for reporting
     let original_hash = hex::encode(Sha256::digest(data));
 
-    // Hash the raw UTF-8 bytes with CRLF line endings (Windows SIP compatibility).
-    // Windows' pwrshsip.dll hashes the raw file bytes, not a UTF-16LE conversion.
+    // Hash as UTF-16LE with CRLF line endings (Windows SIP compatibility).
+    // Windows' pwrshsip.dll converts script content to UTF-16LE internally
+    // before computing the Authenticode digest.
     let script_hash = hash_script_bytes(&script_content);
 
     // Build the PKCS#7 signature
