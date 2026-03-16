@@ -19,10 +19,20 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4.3.1
-      - uses: dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7  # stable
+      - name: Setup Rust
+        run: |
+          rustup default stable
+          rustup update stable
+          rustup target add x86_64-unknown-linux-musl
+      - uses: actions/cache@v4
         with:
-          targets: x86_64-unknown-linux-musl
-      - uses: Swatinem/rust-cache@401aff9a7a08acb9d27b64936a90db81024cff97  # v2.8.2
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
       - name: Install musl toolchain
         run: |
           if ! command -v musl-gcc > /dev/null 2>&1; then
@@ -58,8 +68,20 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4.3.1
-      - uses: dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7  # stable
-      - uses: Swatinem/rust-cache@401aff9a7a08acb9d27b64936a90db81024cff97  # v2.8.2
+      - name: Setup Rust
+        shell: powershell
+        run: |
+          rustup default stable
+          rustup update stable
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~\.cargo\registry
+            ~\.cargo\git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
       - name: Build release
         shell: powershell
         run: cargo build --release

@@ -22,9 +22,11 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4.3.1
-      - uses: dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7  # stable
-        with:
-          components: rustfmt
+      - name: Setup Rust
+        run: |
+          rustup default stable
+          rustup update stable
+          rustup component add rustfmt
       - run: cargo fmt --all --check
 
   clippy:
@@ -34,10 +36,20 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4.3.1
-      - uses: dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7  # stable
+      - name: Setup Rust
+        run: |
+          rustup default stable
+          rustup update stable
+          rustup component add clippy
+      - uses: actions/cache@v4
         with:
-          components: clippy
-      - uses: Swatinem/rust-cache@401aff9a7a08acb9d27b64936a90db81024cff97  # v2.8.2
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
       - run: cargo clippy --all-targets --workspace -- -D warnings
 
   test:
@@ -57,8 +69,26 @@ jobs:
             os: Windows
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4.3.1
-      - uses: dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7  # stable
-      - uses: Swatinem/rust-cache@401aff9a7a08acb9d27b64936a90db81024cff97  # v2.8.2
+      - name: Setup Rust (Linux)
+        if: matrix.os == 'Linux'
+        run: |
+          rustup default stable
+          rustup update stable
+      - name: Setup Rust (Windows)
+        if: matrix.os == 'Windows'
+        shell: powershell
+        run: |
+          rustup default stable
+          rustup update stable
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
       - name: Run tests (Linux)
         if: matrix.os == 'Linux'
         run: cargo test --workspace
@@ -84,8 +114,26 @@ jobs:
             os: Windows
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4.3.1
-      - uses: dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7  # stable
-      - uses: Swatinem/rust-cache@401aff9a7a08acb9d27b64936a90db81024cff97  # v2.8.2
+      - name: Setup Rust (Linux)
+        if: matrix.os == 'Linux'
+        run: |
+          rustup default stable
+          rustup update stable
+      - name: Setup Rust (Windows)
+        if: matrix.os == 'Windows'
+        shell: powershell
+        run: |
+          rustup default stable
+          rustup update stable
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
       - name: Build release (Linux)
         if: matrix.os == 'Linux'
         run: cargo build --release
@@ -121,10 +169,20 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4.3.1
-      - uses: dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7  # stable
+      - name: Setup Rust
+        run: |
+          rustup default stable
+          rustup update stable
+          rustup target add x86_64-unknown-linux-musl
+      - uses: actions/cache@v4
         with:
-          targets: x86_64-unknown-linux-musl
-      - uses: Swatinem/rust-cache@401aff9a7a08acb9d27b64936a90db81024cff97  # v2.8.2
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
       - name: Install musl toolchain
         run: |
           if ! command -v musl-gcc &> /dev/null; then
@@ -153,8 +211,19 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4.3.1
-      - uses: dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7  # stable
-      - uses: Swatinem/rust-cache@401aff9a7a08acb9d27b64936a90db81024cff97  # v2.8.2
+      - name: Setup Rust
+        run: |
+          rustup default stable
+          rustup update stable
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
       - name: Install osslsigncode
         run: |
           if ! command -v osslsigncode &> /dev/null; then
@@ -173,7 +242,10 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4.3.1
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7  # stable
+      - name: Setup Rust
+        run: |
+          rustup default stable
+          rustup update stable
       - name: Install cargo-audit
         run: which cargo-audit || cargo install cargo-audit --locked
       - name: Run audit
@@ -197,7 +269,14 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4.3.1
         with:
           persist-credentials: false
-      - uses: EmbarkStudios/cargo-deny-action@v2
+      - name: Setup Rust
+        run: |
+          rustup default stable
+          rustup update stable
+      - name: Install cargo-deny
+        run: which cargo-deny || cargo install cargo-deny --locked
+      - name: Run cargo-deny
         env:
           GITHUB_TOKEN: ""
           GIT_TERMINAL_PROMPT: "0"
+        run: cargo deny check
