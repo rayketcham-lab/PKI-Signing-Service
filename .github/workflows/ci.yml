@@ -18,7 +18,7 @@ concurrency:
 jobs:
   fmt:
     name: Format
-    runs-on: [self-hosted, Linux]
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4.3.1
@@ -30,7 +30,7 @@ jobs:
   clippy:
     name: Clippy
     needs: [fmt]
-    runs-on: [self-hosted, Linux]
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4.3.1
@@ -38,8 +38,6 @@ jobs:
         with:
           components: clippy
       - uses: Swatinem/rust-cache@401aff9a7a08acb9d27b64936a90db81024cff97  # v2.8.2
-        with:
-          prefix-key: "v0-rust-${{ runner.name }}"
       - run: cargo clippy --all-targets --workspace -- -D warnings
 
   test:
@@ -51,37 +49,16 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - name: Ubuntu (postgres)
-            runner: [self-hosted, Linux, postgres]
-            os: Linux
           - name: Linux
-            runner: [self-hosted, Linux, X64]
+            runner: ubuntu-latest
             os: Linux
           - name: Windows
-            runner: [self-hosted, Windows]
+            runner: windows-latest
             os: Windows
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4.3.1
-      - name: Setup Rust (Linux)
-        if: matrix.os == 'Linux'
-        uses: dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7  # stable
-      - name: Setup Rust (Windows)
-        if: matrix.os == 'Windows'
-        shell: powershell
-        run: |
-          if (-not (Get-Command rustup -ErrorAction SilentlyContinue)) {
-            Invoke-WebRequest -Uri https://win.rustup.rs/x86_64 -OutFile rustup-init.exe
-            .\rustup-init.exe -y --default-toolchain stable
-            Remove-Item rustup-init.exe
-            $env:PATH = "$env:USERPROFILE\.cargo\bin;$env:PATH"
-            [Environment]::SetEnvironmentVariable("PATH", "$env:USERPROFILE\.cargo\bin;$([Environment]::GetEnvironmentVariable('PATH', 'User'))", "User")
-          }
-          rustup default stable
-          rustup update stable
-          echo "$env:USERPROFILE\.cargo\bin" | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
+      - uses: dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7  # stable
       - uses: Swatinem/rust-cache@401aff9a7a08acb9d27b64936a90db81024cff97  # v2.8.2
-        with:
-          prefix-key: "v0-rust-${{ runner.name }}"
       - name: Run tests (Linux)
         if: matrix.os == 'Linux'
         run: cargo test --workspace
@@ -100,33 +77,15 @@ jobs:
       matrix:
         include:
           - name: Linux
-            runner: [self-hosted, Linux]
+            runner: ubuntu-latest
             os: Linux
           - name: Windows
-            runner: [self-hosted, Windows]
+            runner: windows-latest
             os: Windows
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4.3.1
-      - name: Setup Rust (Linux)
-        if: matrix.os == 'Linux'
-        uses: dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7  # stable
-      - name: Setup Rust (Windows)
-        if: matrix.os == 'Windows'
-        shell: powershell
-        run: |
-          if (-not (Get-Command rustup -ErrorAction SilentlyContinue)) {
-            Invoke-WebRequest -Uri https://win.rustup.rs/x86_64 -OutFile rustup-init.exe
-            .\rustup-init.exe -y --default-toolchain stable
-            Remove-Item rustup-init.exe
-            $env:PATH = "$env:USERPROFILE\.cargo\bin;$env:PATH"
-            [Environment]::SetEnvironmentVariable("PATH", "$env:USERPROFILE\.cargo\bin;$([Environment]::GetEnvironmentVariable('PATH', 'User'))", "User")
-          }
-          rustup default stable
-          rustup update stable
-          echo "$env:USERPROFILE\.cargo\bin" | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
+      - uses: dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7  # stable
       - uses: Swatinem/rust-cache@401aff9a7a08acb9d27b64936a90db81024cff97  # v2.8.2
-        with:
-          prefix-key: "v0-rust-${{ runner.name }}"
       - name: Build release (Linux)
         if: matrix.os == 'Linux'
         run: cargo build --release
@@ -158,7 +117,7 @@ jobs:
   build-musl:
     name: Build (musl static)
     needs: [fmt, clippy]
-    runs-on: [self-hosted, Linux]
+    runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4.3.1
@@ -166,8 +125,6 @@ jobs:
         with:
           targets: x86_64-unknown-linux-musl
       - uses: Swatinem/rust-cache@401aff9a7a08acb9d27b64936a90db81024cff97  # v2.8.2
-        with:
-          prefix-key: "v0-rust-${{ runner.name }}"
       - name: Install musl toolchain
         run: |
           if ! command -v musl-gcc &> /dev/null; then
@@ -192,14 +149,12 @@ jobs:
   authenticode-verify:
     name: Authenticode Verification
     needs: [fmt, clippy]
-    runs-on: [self-hosted, Linux]
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4.3.1
       - uses: dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7  # stable
       - uses: Swatinem/rust-cache@401aff9a7a08acb9d27b64936a90db81024cff97  # v2.8.2
-        with:
-          prefix-key: "v0-rust-${{ runner.name }}"
       - name: Install osslsigncode
         run: |
           if ! command -v osslsigncode &> /dev/null; then
@@ -212,7 +167,7 @@ jobs:
 
   audit:
     name: Security Audit
-    runs-on: [self-hosted, Linux]
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4.3.1

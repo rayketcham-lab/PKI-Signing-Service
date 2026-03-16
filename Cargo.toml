@@ -3,7 +3,7 @@ resolver = "2"
 members = ["crates/pki-sign"]
 
 [workspace.package]
-version = "0.5.2"
+version = "0.5.3"
 edition = "2021"
 license = "MIT"
 repository = "https://github.com/rayketcham-lab/PKI-Signing-Service"
