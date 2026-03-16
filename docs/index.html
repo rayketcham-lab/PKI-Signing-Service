@@ -1,0 +1,1183 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PKI-Signing-Service — Pure Rust Code Signing Engine</title>
+  <meta name="description" content="Authenticode, PKCS#7/CMS, RFC 3161 timestamping, post-quantum algorithms. Pure Rust, static binary, no OpenSSL.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg-primary: #06080f;
+      --bg-surface: #111827;
+      --bg-surface-hover: #1a2332;
+      --bg-surface-alt: #0d1220;
+      --border-subtle: rgba(99, 102, 241, 0.12);
+      --border-hover: rgba(99, 102, 241, 0.3);
+      --text-primary: #f1f5f9;
+      --text-secondary: #94a3b8;
+      --text-tertiary: #64748b;
+      --accent-indigo: #6366f1;
+      --accent-indigo-light: #818cf8;
+      --accent-cyan: #06b6d4;
+      --accent-cyan-light: #22d3ee;
+      --accent-green: #10b981;
+      --accent-green-light: #34d399;
+      --accent-amber: #f59e0b;
+      --gradient-shimmer: linear-gradient(135deg, #6366f1, #06b6d4, #10b981, #6366f1);
+      --gradient-accent: linear-gradient(135deg, #6366f1, #06b6d4);
+      --gradient-surface: linear-gradient(180deg, rgba(99, 102, 241, 0.08) 0%, transparent 100%);
+      --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
+      --radius-sm: 6px;
+      --radius-md: 12px;
+      --radius-lg: 20px;
+      --radius-xl: 28px;
+    }
+
+    *, *::before, *::after {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    html {
+      scroll-behavior: smooth;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+    }
+
+    body {
+      font-family: var(--font-sans);
+      background: var(--bg-primary);
+      color: var(--text-primary);
+      line-height: 1.6;
+      overflow-x: hidden;
+    }
+
+    /* Animated Grid Background */
+    .grid-bg {
+      position: fixed;
+      inset: 0;
+      z-index: 0;
+      pointer-events: none;
+      background-image:
+        linear-gradient(rgba(99, 102, 241, 0.03) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(99, 102, 241, 0.03) 1px, transparent 1px);
+      background-size: 64px 64px;
+      animation: gridShift 30s linear infinite;
+    }
+
+    @keyframes gridShift {
+      0% { transform: translate(0, 0); }
+      100% { transform: translate(64px, 64px); }
+    }
+
+    /* Floating Orbs */
+    .orb {
+      position: absolute;
+      border-radius: 50%;
+      filter: blur(80px);
+      pointer-events: none;
+      will-change: transform;
+    }
+
+    .orb-1 {
+      width: 600px;
+      height: 600px;
+      background: radial-gradient(circle, rgba(99, 102, 241, 0.15), transparent 70%);
+      top: -200px;
+      left: -100px;
+      animation: orbFloat1 20s ease-in-out infinite;
+    }
+
+    .orb-2 {
+      width: 500px;
+      height: 500px;
+      background: radial-gradient(circle, rgba(6, 182, 212, 0.12), transparent 70%);
+      top: -100px;
+      right: -150px;
+      animation: orbFloat2 25s ease-in-out infinite;
+    }
+
+    .orb-3 {
+      width: 400px;
+      height: 400px;
+      background: radial-gradient(circle, rgba(16, 185, 129, 0.1), transparent 70%);
+      bottom: -100px;
+      left: 30%;
+      animation: orbFloat3 22s ease-in-out infinite;
+    }
+
+    @keyframes orbFloat1 {
+      0%, 100% { transform: translate(0, 0) scale(1); }
+      33% { transform: translate(50px, 30px) scale(1.1); }
+      66% { transform: translate(-30px, 50px) scale(0.95); }
+    }
+
+    @keyframes orbFloat2 {
+      0%, 100% { transform: translate(0, 0) scale(1); }
+      33% { transform: translate(-40px, 40px) scale(0.9); }
+      66% { transform: translate(30px, -30px) scale(1.05); }
+    }
+
+    @keyframes orbFloat3 {
+      0%, 100% { transform: translate(0, 0) scale(1); }
+      50% { transform: translate(60px, -40px) scale(1.1); }
+    }
+
+    /* Layout */
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 0 24px;
+      position: relative;
+      z-index: 1;
+    }
+
+    /* Navigation */
+    .nav {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      z-index: 100;
+      padding: 16px 0;
+      background: rgba(6, 8, 15, 0.8);
+      backdrop-filter: blur(20px);
+      border-bottom: 1px solid var(--border-subtle);
+    }
+
+    .nav .container {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .nav-brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      text-decoration: none;
+      color: var(--text-primary);
+    }
+
+    .nav-logo {
+      width: 36px;
+      height: 36px;
+      background: var(--gradient-accent);
+      border-radius: var(--radius-sm);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-family: var(--font-mono);
+      font-weight: 700;
+      font-size: 14px;
+      color: white;
+    }
+
+    .nav-title {
+      font-weight: 700;
+      font-size: 18px;
+      letter-spacing: -0.02em;
+    }
+
+    .nav-links {
+      display: flex;
+      align-items: center;
+      gap: 32px;
+      list-style: none;
+    }
+
+    .nav-links a {
+      color: var(--text-secondary);
+      text-decoration: none;
+      font-size: 14px;
+      font-weight: 500;
+      transition: color 0.2s;
+    }
+
+    .nav-links a:hover {
+      color: var(--text-primary);
+    }
+
+    .nav-cta {
+      background: var(--gradient-accent);
+      color: white !important;
+      padding: 8px 20px;
+      border-radius: var(--radius-sm);
+      font-weight: 600 !important;
+      transition: opacity 0.2s, transform 0.2s !important;
+    }
+
+    .nav-cta:hover {
+      opacity: 0.9;
+      transform: translateY(-1px);
+    }
+
+    /* Hero */
+    .hero {
+      position: relative;
+      padding: 180px 0 80px;
+      text-align: center;
+      overflow: hidden;
+    }
+
+    /* Pulsing Badge */
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 16px 6px 12px;
+      background: rgba(99, 102, 241, 0.1);
+      border: 1px solid rgba(99, 102, 241, 0.25);
+      border-radius: 100px;
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--accent-indigo-light);
+      margin-bottom: 32px;
+      animation: badgePulse 3s ease-in-out infinite;
+    }
+
+    .badge-dot {
+      width: 8px;
+      height: 8px;
+      background: var(--accent-green);
+      border-radius: 50%;
+      position: relative;
+    }
+
+    .badge-dot::after {
+      content: '';
+      position: absolute;
+      inset: -3px;
+      border-radius: 50%;
+      border: 2px solid var(--accent-green);
+      animation: dotPulse 2s ease-in-out infinite;
+    }
+
+    @keyframes badgePulse {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(99, 102, 241, 0.15); }
+      50% { box-shadow: 0 0 0 8px rgba(99, 102, 241, 0); }
+    }
+
+    @keyframes dotPulse {
+      0%, 100% { transform: scale(1); opacity: 1; }
+      50% { transform: scale(1.8); opacity: 0; }
+    }
+
+    /* Shimmer Gradient Text */
+    .hero-title {
+      font-size: clamp(48px, 7vw, 80px);
+      font-weight: 900;
+      letter-spacing: -0.03em;
+      line-height: 1.05;
+      margin-bottom: 24px;
+      background: var(--gradient-shimmer);
+      background-size: 300% 300%;
+      -webkit-background-clip: text;
+      background-clip: text;
+      -webkit-text-fill-color: transparent;
+      animation: shimmer 6s ease-in-out infinite;
+    }
+
+    @keyframes shimmer {
+      0% { background-position: 0% 50%; }
+      50% { background-position: 100% 50%; }
+      100% { background-position: 0% 50%; }
+    }
+
+    .hero-subtitle {
+      font-size: clamp(18px, 2.5vw, 22px);
+      color: var(--text-secondary);
+      max-width: 680px;
+      margin: 0 auto 40px;
+      line-height: 1.6;
+    }
+
+    .hero-buttons {
+      display: flex;
+      justify-content: center;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      padding: 14px 28px;
+      border-radius: var(--radius-md);
+      font-size: 15px;
+      font-weight: 600;
+      text-decoration: none;
+      transition: all 0.25s ease;
+      border: none;
+      cursor: pointer;
+    }
+
+    .btn-primary {
+      background: var(--gradient-accent);
+      color: white;
+      box-shadow: 0 4px 20px rgba(99, 102, 241, 0.3);
+    }
+
+    .btn-primary:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 8px 30px rgba(99, 102, 241, 0.4);
+    }
+
+    .btn-secondary {
+      background: var(--bg-surface);
+      color: var(--text-primary);
+      border: 1px solid var(--border-subtle);
+    }
+
+    .btn-secondary:hover {
+      border-color: var(--border-hover);
+      background: var(--bg-surface-hover);
+      transform: translateY(-2px);
+    }
+
+    .btn svg {
+      width: 18px;
+      height: 18px;
+    }
+
+    /* Stats Ribbon */
+    .stats-ribbon {
+      padding: 48px 0;
+      border-top: 1px solid var(--border-subtle);
+      border-bottom: 1px solid var(--border-subtle);
+      background: var(--gradient-surface);
+    }
+
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 32px;
+      text-align: center;
+    }
+
+    .stat-item {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .stat-value {
+      font-size: 32px;
+      font-weight: 800;
+      letter-spacing: -0.02em;
+      background: var(--gradient-accent);
+      -webkit-background-clip: text;
+      background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .stat-label {
+      font-size: 14px;
+      color: var(--text-tertiary);
+      font-weight: 500;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    /* Gradient Divider */
+    .gradient-divider {
+      height: 1px;
+      background: linear-gradient(90deg, transparent, var(--accent-indigo), var(--accent-cyan), transparent);
+      opacity: 0.3;
+    }
+
+    /* Sections */
+    .section {
+      padding: 100px 0;
+    }
+
+    .section-label {
+      display: inline-block;
+      font-family: var(--font-mono);
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--accent-cyan);
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      margin-bottom: 16px;
+    }
+
+    .section-title {
+      font-size: clamp(32px, 4vw, 48px);
+      font-weight: 800;
+      letter-spacing: -0.03em;
+      margin-bottom: 16px;
+    }
+
+    .section-desc {
+      font-size: 18px;
+      color: var(--text-secondary);
+      max-width: 600px;
+      margin-bottom: 56px;
+    }
+
+    /* Feature Cards */
+    .features-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 24px;
+    }
+
+    .feature-card {
+      background: var(--bg-surface);
+      border-radius: var(--radius-md);
+      padding: 32px;
+      position: relative;
+      overflow: hidden;
+      transition: all 0.3s ease;
+      border: 1px solid transparent;
+    }
+
+    .feature-card::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 3px;
+      background: var(--gradient-accent);
+      opacity: 0;
+      transition: opacity 0.3s ease;
+    }
+
+    .feature-card:hover {
+      border-color: var(--border-hover);
+      transform: translateY(-4px);
+      background: var(--bg-surface-hover);
+    }
+
+    .feature-card:hover::before {
+      opacity: 1;
+    }
+
+    .feature-icon {
+      width: 44px;
+      height: 44px;
+      border-radius: var(--radius-sm);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin-bottom: 20px;
+      font-size: 20px;
+    }
+
+    .feature-icon-indigo { background: rgba(99, 102, 241, 0.12); color: var(--accent-indigo-light); }
+    .feature-icon-cyan { background: rgba(6, 182, 212, 0.12); color: var(--accent-cyan-light); }
+    .feature-icon-green { background: rgba(16, 185, 129, 0.12); color: var(--accent-green-light); }
+    .feature-icon-amber { background: rgba(245, 158, 11, 0.12); color: var(--accent-amber); }
+
+    .feature-card h3 {
+      font-size: 18px;
+      font-weight: 700;
+      margin-bottom: 10px;
+      letter-spacing: -0.01em;
+    }
+
+    .feature-card p {
+      font-size: 14px;
+      color: var(--text-secondary);
+      line-height: 1.65;
+    }
+
+    /* Terminal */
+    .terminal {
+      background: var(--bg-surface);
+      border-radius: var(--radius-lg);
+      border: 1px solid var(--border-subtle);
+      overflow: hidden;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.4);
+    }
+
+    .terminal-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 16px 20px;
+      background: var(--bg-surface-alt);
+      border-bottom: 1px solid var(--border-subtle);
+    }
+
+    .terminal-dot {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+    }
+
+    .terminal-dot-red { background: #ef4444; }
+    .terminal-dot-yellow { background: #eab308; }
+    .terminal-dot-green { background: #22c55e; }
+
+    .terminal-title {
+      flex: 1;
+      text-align: center;
+      font-family: var(--font-mono);
+      font-size: 12px;
+      color: var(--text-tertiary);
+    }
+
+    .terminal-body {
+      padding: 24px 28px;
+      font-family: var(--font-mono);
+      font-size: 14px;
+      line-height: 1.8;
+      overflow-x: auto;
+    }
+
+    .terminal-body .comment {
+      color: var(--text-tertiary);
+    }
+
+    .terminal-body .prompt {
+      color: var(--accent-cyan);
+    }
+
+    .terminal-body .command {
+      color: var(--text-primary);
+    }
+
+    .terminal-body .flag {
+      color: var(--accent-indigo-light);
+    }
+
+    .terminal-body .arg {
+      color: var(--accent-amber);
+    }
+
+    .terminal-body .success {
+      color: var(--accent-green);
+    }
+
+    .terminal-body .info {
+      color: var(--text-secondary);
+    }
+
+    /* Architecture */
+    .arch-block {
+      background: var(--bg-surface);
+      border-radius: var(--radius-lg);
+      border: 1px solid var(--border-subtle);
+      overflow: hidden;
+    }
+
+    .arch-header {
+      padding: 16px 24px;
+      background: var(--bg-surface-alt);
+      border-bottom: 1px solid var(--border-subtle);
+      font-family: var(--font-mono);
+      font-size: 13px;
+      color: var(--text-tertiary);
+    }
+
+    .arch-body {
+      padding: 28px 28px;
+      font-family: var(--font-mono);
+      font-size: 13px;
+      line-height: 1.7;
+      color: var(--text-secondary);
+      overflow-x: auto;
+      white-space: pre;
+    }
+
+    .arch-body .hl-dir {
+      color: var(--accent-cyan);
+      font-weight: 600;
+    }
+
+    .arch-body .hl-file {
+      color: var(--text-primary);
+    }
+
+    .arch-body .hl-desc {
+      color: var(--text-tertiary);
+    }
+
+    /* API Endpoints */
+    .api-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 16px;
+    }
+
+    .api-card {
+      background: var(--bg-surface);
+      border-radius: var(--radius-md);
+      padding: 24px;
+      border: 1px solid transparent;
+      transition: all 0.3s ease;
+    }
+
+    .api-card:hover {
+      border-color: var(--border-hover);
+      transform: translateY(-2px);
+    }
+
+    .api-method {
+      display: inline-block;
+      font-family: var(--font-mono);
+      font-size: 12px;
+      font-weight: 700;
+      padding: 4px 10px;
+      border-radius: 4px;
+      margin-bottom: 12px;
+      text-transform: uppercase;
+    }
+
+    .api-method-post {
+      background: rgba(99, 102, 241, 0.15);
+      color: var(--accent-indigo-light);
+    }
+
+    .api-method-get {
+      background: rgba(16, 185, 129, 0.15);
+      color: var(--accent-green-light);
+    }
+
+    .api-route {
+      font-family: var(--font-mono);
+      font-size: 15px;
+      font-weight: 600;
+      color: var(--text-primary);
+      margin-bottom: 8px;
+    }
+
+    .api-desc {
+      font-size: 13px;
+      color: var(--text-tertiary);
+    }
+
+    /* Requirements */
+    .req-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 24px;
+    }
+
+    .req-card {
+      background: var(--bg-surface);
+      border-radius: var(--radius-md);
+      padding: 28px;
+      text-align: center;
+      border: 1px solid transparent;
+      transition: all 0.3s ease;
+    }
+
+    .req-card:hover {
+      border-color: var(--border-hover);
+    }
+
+    .req-icon {
+      font-size: 32px;
+      margin-bottom: 16px;
+    }
+
+    .req-card h3 {
+      font-size: 16px;
+      font-weight: 700;
+      margin-bottom: 8px;
+    }
+
+    .req-card p {
+      font-size: 13px;
+      color: var(--text-tertiary);
+    }
+
+    /* CTA */
+    .cta-section {
+      padding: 100px 0 120px;
+      text-align: center;
+    }
+
+    .cta-box {
+      background: var(--bg-surface);
+      border-radius: var(--radius-xl);
+      border: 1px solid var(--border-subtle);
+      padding: 72px 48px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .cta-box::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 2px;
+      background: var(--gradient-shimmer);
+      background-size: 300% 300%;
+      animation: shimmer 6s ease-in-out infinite;
+    }
+
+    .cta-title {
+      font-size: clamp(28px, 4vw, 40px);
+      font-weight: 800;
+      margin-bottom: 16px;
+      letter-spacing: -0.02em;
+    }
+
+    .cta-desc {
+      font-size: 18px;
+      color: var(--text-secondary);
+      margin-bottom: 40px;
+      max-width: 520px;
+      margin-left: auto;
+      margin-right: auto;
+    }
+
+    .cta-buttons {
+      display: flex;
+      justify-content: center;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+
+    /* Footer */
+    .footer {
+      padding: 40px 0;
+      border-top: 1px solid var(--border-subtle);
+      text-align: center;
+    }
+
+    .footer p {
+      font-size: 13px;
+      color: var(--text-tertiary);
+    }
+
+    .footer a {
+      color: var(--accent-indigo-light);
+      text-decoration: none;
+    }
+
+    .footer a:hover {
+      text-decoration: underline;
+    }
+
+    /* Fade-up animation */
+    .fade-up {
+      opacity: 0;
+      transform: translateY(30px);
+      transition: opacity 0.7s ease, transform 0.7s ease;
+    }
+
+    .fade-up.visible {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    /* Responsive */
+    @media (max-width: 1024px) {
+      .features-grid {
+        grid-template-columns: repeat(2, 1fr);
+      }
+    }
+
+    @media (max-width: 768px) {
+      .nav-links {
+        display: none;
+      }
+
+      .features-grid,
+      .api-grid,
+      .req-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .stats-grid {
+        grid-template-columns: repeat(2, 1fr);
+        gap: 24px;
+      }
+
+      .hero {
+        padding: 140px 0 60px;
+      }
+
+      .section {
+        padding: 72px 0;
+      }
+
+      .cta-box {
+        padding: 48px 24px;
+      }
+    }
+
+    @media (max-width: 480px) {
+      .stats-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .hero-buttons {
+        flex-direction: column;
+        align-items: center;
+      }
+
+      .cta-buttons {
+        flex-direction: column;
+        align-items: center;
+      }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Animated Grid -->
+  <div class="grid-bg"></div>
+
+  <!-- Navigation -->
+  <nav class="nav">
+    <div class="container">
+      <a href="#" class="nav-brand">
+        <div class="nav-logo">PKI</div>
+        <span class="nav-title">pki-sign</span>
+      </a>
+      <ul class="nav-links">
+        <li><a href="#features">Features</a></li>
+        <li><a href="#demo">Demo</a></li>
+        <li><a href="#architecture">Architecture</a></li>
+        <li><a href="#api">API</a></li>
+        <li><a href="https://github.com/rayketcham-lab/PKI-Signing-Service" class="nav-cta">GitHub</a></li>
+      </ul>
+    </div>
+  </nav>
+
+  <!-- Hero -->
+  <section class="hero">
+    <div class="orb orb-1"></div>
+    <div class="orb orb-2"></div>
+    <div class="orb orb-3"></div>
+    <div class="container">
+      <div class="badge">
+        <span class="badge-dot"></span>
+        v0.5.3 &mdash; Post-Quantum Ready
+      </div>
+      <h1 class="hero-title">Pure Rust<br>Code Signing</h1>
+      <p class="hero-subtitle">
+        Authenticode, PKCS#7/CMS, and RFC 3161 timestamping in a single static binary.
+        No OpenSSL. No C dependencies. Just Rust.
+      </p>
+      <div class="hero-buttons">
+        <a href="https://github.com/rayketcham-lab/PKI-Signing-Service/releases" class="btn btn-primary">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          Download Binary
+        </a>
+        <a href="https://github.com/rayketcham-lab/PKI-Signing-Service" class="btn btn-secondary">
+          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>
+          View Source
+        </a>
+      </div>
+    </div>
+  </section>
+
+  <!-- Stats Ribbon -->
+  <div class="stats-ribbon">
+    <div class="container">
+      <div class="stats-grid">
+        <div class="stat-item fade-up">
+          <span class="stat-value">6</span>
+          <span class="stat-label">Formats</span>
+        </div>
+        <div class="stat-item fade-up">
+          <span class="stat-value">5</span>
+          <span class="stat-label">Algorithms</span>
+        </div>
+        <div class="stat-item fade-up">
+          <span class="stat-value">REST</span>
+          <span class="stat-label">API</span>
+        </div>
+        <div class="stat-item fade-up">
+          <span class="stat-value">Pure</span>
+          <span class="stat-label">Rust</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="gradient-divider"></div>
+
+  <!-- Features -->
+  <section class="section" id="features">
+    <div class="container">
+      <span class="section-label fade-up">Capabilities</span>
+      <h2 class="section-title fade-up">Everything you need to sign</h2>
+      <p class="section-desc fade-up">A complete code signing solution from Authenticode to post-quantum, delivered as a single zero-dependency binary.</p>
+
+      <div class="features-grid">
+        <div class="feature-card fade-up">
+          <div class="feature-icon feature-icon-indigo">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+          </div>
+          <h3>Authenticode Signing</h3>
+          <p>Full PE, CAB, and MSI signing with embedded signatures. Compatible with Windows signtool verification and SmartScreen.</p>
+        </div>
+
+        <div class="feature-card fade-up">
+          <div class="feature-icon feature-icon-cyan">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+          </div>
+          <h3>PKCS#7 / CMS</h3>
+          <p>Detached and embedded PKCS#7 signatures with full ASN.1 builder. S/MIME, signed data, enveloped data, and ESS support.</p>
+        </div>
+
+        <div class="feature-card fade-up">
+          <div class="feature-icon feature-icon-green">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+          </div>
+          <h3>RFC 3161 Timestamping</h3>
+          <p>Client and built-in TSA server. Prove code was signed before certificate expiry. Evidence Record Syntax (ERS) support.</p>
+        </div>
+
+        <div class="feature-card fade-up">
+          <div class="feature-icon feature-icon-amber">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l9 4.5v7L12 21l-9-6.5v-7L12 3z"/><path d="M12 12l9-4.5"/><path d="M12 12v9"/><path d="M12 12L3 7.5"/></svg>
+          </div>
+          <h3>Post-Quantum (ML-DSA)</h3>
+          <p>Forward-looking ML-DSA lattice signatures alongside RSA, ECDSA P-256/P-384, and Ed25519. Ready for the quantum era.</p>
+        </div>
+
+        <div class="feature-card fade-up">
+          <div class="feature-icon feature-icon-indigo">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/></svg>
+          </div>
+          <h3>PowerShell SIP</h3>
+          <p>Sign and verify PowerShell scripts with Subject Interface Package (SIP) support. Drop-in replacement for Set-AuthenticodeSignature.</p>
+        </div>
+
+        <div class="feature-card fade-up">
+          <div class="feature-icon feature-icon-cyan">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+          </div>
+          <h3>REST API + LDAP Auth</h3>
+          <p>Run as a web service with LDAP/AD authentication, audit logging, and rate limiting. Enterprise-ready signing infrastructure.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <div class="gradient-divider"></div>
+
+  <!-- Terminal Demo -->
+  <section class="section" id="demo">
+    <div class="container">
+      <span class="section-label fade-up">In Action</span>
+      <h2 class="section-title fade-up">Sign in seconds</h2>
+      <p class="section-desc fade-up">Simple CLI, powerful results. One binary handles signing, verification, and timestamping.</p>
+
+      <div class="terminal fade-up">
+        <div class="terminal-header">
+          <div class="terminal-dot terminal-dot-red"></div>
+          <div class="terminal-dot terminal-dot-yellow"></div>
+          <div class="terminal-dot terminal-dot-green"></div>
+          <span class="terminal-title">pki-sign &mdash; terminal</span>
+        </div>
+        <div class="terminal-body">
+<span class="comment"># Sign a Windows executable</span>
+<span class="prompt">&gt;</span> <span class="command">pki-sign sign</span> <span class="arg">app.exe</span> <span class="flag">--pfx</span> <span class="arg">cert.pfx</span>
+  <span class="success">&#10003; Loaded PFX (RSA 2048, CN=My Org)</span>
+  <span class="success">&#10003; Authenticode signed (SHA-256)</span>
+  <span class="success">&#10003; Timestamped (RFC 3161)</span>
+
+<span class="comment"># Verify the signature</span>
+<span class="prompt">&gt;</span> <span class="command">pki-sign verify</span> <span class="arg">app.exe</span>
+  <span class="success">&#10003; Valid Authenticode signature</span>
+  <span class="success">&#10003; Certificate chain verified</span>
+  <span class="success">&#10003; Timestamp verified (2026-03-16T09:14:22Z)</span>
+
+<span class="comment"># Sign a CAB archive with ECDSA</span>
+<span class="prompt">&gt;</span> <span class="command">pki-sign sign</span> <span class="arg">package.cab</span> <span class="flag">--key</span> <span class="arg">ec-p256.pem</span> <span class="flag">--cert</span> <span class="arg">signing.crt</span>
+  <span class="success">&#10003; Loaded ECDSA P-256 key</span>
+  <span class="success">&#10003; CAB signed (SHA-256)</span>
+  <span class="success">&#10003; Timestamped (RFC 3161)</span>
+
+<span class="comment"># Run as a signing service</span>
+<span class="prompt">&gt;</span> <span class="command">pki-sign serve</span> <span class="flag">--bind</span> <span class="arg">0.0.0.0:8443</span> <span class="flag">--ldap</span> <span class="arg">ldap://dc.corp.local</span>
+  <span class="info">&#9656; Listening on https://0.0.0.0:8443</span>
+  <span class="info">&#9656; LDAP auth: dc.corp.local</span>
+  <span class="info">&#9656; Audit log: /var/log/pki-sign/audit.json</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <div class="gradient-divider"></div>
+
+  <!-- Architecture -->
+  <section class="section" id="architecture">
+    <div class="container">
+      <span class="section-label fade-up">Under the Hood</span>
+      <h2 class="section-title fade-up">Clean architecture</h2>
+      <p class="section-desc fade-up">34 source files, modular design. Every component is isolated, testable, and auditable.</p>
+
+      <div class="arch-block fade-up">
+        <div class="arch-header">crates/pki-sign/src/</div>
+        <div class="arch-body"><span class="hl-dir">pe/</span>
+  <span class="hl-file">parser.rs</span>         <span class="hl-desc">&#8212; PE format parser</span>
+  <span class="hl-file">authenticode.rs</span>   <span class="hl-desc">&#8212; Authenticode digest + verification</span>
+  <span class="hl-file">embed.rs</span>          <span class="hl-desc">&#8212; Signature embedding into PE sections</span>
+
+<span class="hl-dir">pkcs7/</span>
+  <span class="hl-file">asn1.rs</span>           <span class="hl-desc">&#8212; ASN.1 DER encoding/decoding</span>
+  <span class="hl-file">builder.rs</span>        <span class="hl-desc">&#8212; PKCS#7 signed data construction</span>
+  <span class="hl-file">enveloped.rs</span>      <span class="hl-desc">&#8212; CMS enveloped data (ECDH, KEM)</span>
+  <span class="hl-file">ess.rs</span>            <span class="hl-desc">&#8212; Enhanced Security Services</span>
+
+<span class="hl-dir">crypto/</span>
+  <span class="hl-file">hkdf.rs</span>           <span class="hl-desc">&#8212; HMAC-based key derivation</span>
+  <span class="hl-file">rsa_oaep.rs</span>       <span class="hl-desc">&#8212; RSA-OAEP encryption</span>
+
+<span class="hl-dir">web/</span>
+  <span class="hl-file">handlers.rs</span>       <span class="hl-desc">&#8212; HTTP request handlers</span>
+  <span class="hl-file">middleware.rs</span>     <span class="hl-desc">&#8212; Auth, rate-limit, logging middleware</span>
+  <span class="hl-file">ldap.rs</span>           <span class="hl-desc">&#8212; LDAP/Active Directory authentication</span>
+  <span class="hl-file">audit.rs</span>          <span class="hl-desc">&#8212; Structured audit event logging</span>
+
+<span class="hl-file">signer.rs</span>           <span class="hl-desc">&#8212; Core signing engine</span>
+<span class="hl-file">verifier.rs</span>         <span class="hl-desc">&#8212; Signature verification</span>
+<span class="hl-file">timestamp.rs</span>        <span class="hl-desc">&#8212; RFC 3161 timestamp client</span>
+<span class="hl-file">tsa_server.rs</span>       <span class="hl-desc">&#8212; Built-in TSA HTTP server</span>
+<span class="hl-file">cab.rs</span>              <span class="hl-desc">&#8212; CAB archive signing</span>
+<span class="hl-file">msi.rs</span>              <span class="hl-desc">&#8212; MSI installer signing</span>
+<span class="hl-file">powershell.rs</span>       <span class="hl-desc">&#8212; PowerShell SIP signing</span>
+<span class="hl-file">config.rs</span>           <span class="hl-desc">&#8212; Configuration + CLI parsing</span>
+<span class="hl-file">error.rs</span>            <span class="hl-desc">&#8212; Error types (thiserror)</span></div>
+      </div>
+    </div>
+  </section>
+
+  <div class="gradient-divider"></div>
+
+  <!-- API -->
+  <section class="section" id="api">
+    <div class="container">
+      <span class="section-label fade-up">Endpoints</span>
+      <h2 class="section-title fade-up">REST API</h2>
+      <p class="section-desc fade-up">Deploy as a centralized signing service. Authenticate via LDAP, sign over HTTPS, audit everything.</p>
+
+      <div class="api-grid">
+        <div class="api-card fade-up">
+          <span class="api-method api-method-post">POST</span>
+          <div class="api-route">/api/v1/sign</div>
+          <div class="api-desc">Sign a binary. Accepts PE, CAB, MSI, or raw payload. Returns signed artifact or detached signature.</div>
+        </div>
+        <div class="api-card fade-up">
+          <span class="api-method api-method-post">POST</span>
+          <div class="api-route">/api/v1/verify</div>
+          <div class="api-desc">Verify a signed binary. Returns signature details, certificate chain, and timestamp status.</div>
+        </div>
+        <div class="api-card fade-up">
+          <span class="api-method api-method-post">POST</span>
+          <div class="api-route">/api/v1/timestamp</div>
+          <div class="api-desc">RFC 3161 timestamp endpoint. Submit a timestamp request, receive a signed timestamp token.</div>
+        </div>
+        <div class="api-card fade-up">
+          <span class="api-method api-method-get">GET</span>
+          <div class="api-route">/api/v1/health</div>
+          <div class="api-desc">Health check and service status. Returns uptime, loaded certificates, and signing statistics.</div>
+        </div>
+        <div class="api-card fade-up">
+          <span class="api-method api-method-get">GET</span>
+          <div class="api-route">/api/v1/certs</div>
+          <div class="api-desc">List available signing certificates. Shows subject, issuer, algorithm, and expiration.</div>
+        </div>
+        <div class="api-card fade-up">
+          <span class="api-method api-method-get">GET</span>
+          <div class="api-route">/api/v1/audit</div>
+          <div class="api-desc">Query audit log. Filter by user, action, time range. Returns structured JSON events.</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <div class="gradient-divider"></div>
+
+  <!-- Requirements -->
+  <section class="section" id="requirements">
+    <div class="container">
+      <span class="section-label fade-up">Getting Started</span>
+      <h2 class="section-title fade-up">Requirements</h2>
+      <p class="section-desc fade-up">Minimal dependencies by design. One binary, zero runtime requirements.</p>
+
+      <div class="req-grid">
+        <div class="req-card fade-up">
+          <div class="req-icon">
+            <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="var(--accent-indigo-light)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M9 9l6 6"/><path d="M15 9l-6 6"/></svg>
+          </div>
+          <h3>Static Binary</h3>
+          <p>Single musl-linked binary. No shared libraries, no OpenSSL, no runtime dependencies. Just copy and run.</p>
+        </div>
+        <div class="req-card fade-up">
+          <div class="req-icon">
+            <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="var(--accent-cyan-light)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+          </div>
+          <h3>Build from Source</h3>
+          <p>Rust 1.75+ and Cargo. Clone the repo, <code style="color:var(--accent-cyan);font-family:var(--font-mono);font-size:12px">cargo build --release</code>, done.</p>
+        </div>
+        <div class="req-card fade-up">
+          <div class="req-icon">
+            <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="var(--accent-green-light)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+          </div>
+          <h3>MIT License</h3>
+          <p>Use it in proprietary projects, embed it in your pipeline, fork it freely. No copyleft restrictions.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <div class="gradient-divider"></div>
+
+  <!-- CTA -->
+  <section class="cta-section">
+    <div class="container">
+      <div class="cta-box fade-up">
+        <h2 class="cta-title">Start signing today</h2>
+        <p class="cta-desc">Download the binary, import your PFX, and sign your first executable in under a minute.</p>
+        <div class="cta-buttons">
+          <a href="https://github.com/rayketcham-lab/PKI-Signing-Service/releases" class="btn btn-primary">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            Download v0.5.3
+          </a>
+          <a href="https://github.com/rayketcham-lab/PKI-Signing-Service" class="btn btn-secondary">
+            <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>
+            View on GitHub
+          </a>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Footer -->
+  <footer class="footer">
+    <div class="container">
+      <p>PKI-Signing-Service &mdash; MIT License &mdash; <a href="https://github.com/rayketcham-lab/PKI-Signing-Service">rayketcham-lab/PKI-Signing-Service</a></p>
+    </div>
+  </footer>
+
+  <!-- Scroll-triggered fade-up -->
+  <script>
+    document.addEventListener('DOMContentLoaded', function () {
+      var observer = new IntersectionObserver(function (entries) {
+        entries.forEach(function (entry) {
+          if (entry.isIntersecting) {
+            entry.target.classList.add('visible');
+          }
+        });
+      }, { threshold: 0.1, rootMargin: '0px 0px -40px 0px' });
+
+      document.querySelectorAll('.fade-up').forEach(function (el) {
+        observer.observe(el);
+      });
+    });
+  </script>
+
+</body>
+</html>
