@@ -1,6 +1,6 @@
 # Code Signing Service
 
-![Version](https://img.shields.io/badge/version-0.5.3-blue) ![License](https://img.shields.io/badge/license-MIT-green) ![Language](https://img.shields.io/badge/language-Rust-orange) ![Dependencies](https://img.shields.io/badge/openssl-none-brightgreen) ![CI](https://img.shields.io/github/actions/workflow/status/rayketcham-lab/PKI-Signing-Service/ci.yml?branch=main&label=CI)
+![Version](https://img.shields.io/badge/version-0.5.3-blue) ![License](https://img.shields.io/badge/license-Apache--2.0-green) ![Language](https://img.shields.io/badge/language-Rust-orange) ![Dependencies](https://img.shields.io/badge/openssl-none-brightgreen) ![CI](https://img.shields.io/github/actions/workflow/status/rayketcham-lab/PKI-Signing-Service/ci.yml?branch=main&label=CI)
 
 Pure Rust code signing engine. Authenticode for Windows PE/CAB/MSI, detached CMS/PKCS#7, PowerShell scripts, RFC 3161 timestamping. Multi-algorithm: RSA, ECDSA P-256/P-384, Ed25519, ML-DSA (FIPS 204).
 
@@ -457,4 +457,4 @@ WantedBy=multi-user.target
 
 ## License
 
-MIT
+Apache-2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE).

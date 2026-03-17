@@ -5,7 +5,7 @@ members = ["crates/pki-sign"]
 [workspace.package]
 version = "0.5.3"
 edition = "2021"
-license = "MIT"
+license = "Apache-2.0"
 repository = "https://github.com/rayketcham-lab/PKI-Signing-Service"
 
 [workspace.dependencies]

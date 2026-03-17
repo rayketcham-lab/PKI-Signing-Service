@@ -2,7 +2,7 @@
 
 Standalone code signing engine — Authenticode, PKCS#7, RFC 3161 timestamping, detached CMS signing, PowerShell SIP.
 
-**Version:** 0.5.3 | **License:** MIT | **Date:** 2026-03-13
+**Version:** 0.5.3 | **License:** Apache-2.0 | **Date:** 2026-03-13
 
 ## MANDATORY Rules
 ### Bash Commands: NO CHAINING (CRITICAL)
