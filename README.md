@@ -1,17 +1,40 @@
 # Code Signing Service
 
-[![CI](https://img.shields.io/github/actions/workflow/status/rayketcham-lab/PKI-Signing-Service/ci.yml?branch=main&label=CI)](https://github.com/rayketcham-lab/PKI-Signing-Service/actions/workflows/ci.yml)
-[![Daily Health Check](https://img.shields.io/github/actions/workflow/status/rayketcham-lab/PKI-Signing-Service/daily-health.yml?branch=main&label=Daily%20Check)](https://github.com/rayketcham-lab/PKI-Signing-Service/actions/workflows/daily-health.yml)
-[![Interop Tests](https://img.shields.io/github/actions/workflow/status/rayketcham-lab/PKI-Signing-Service/interop.yml?branch=main&label=Interop)](https://github.com/rayketcham-lab/PKI-Signing-Service/actions/workflows/interop.yml)
-[![Version](https://img.shields.io/badge/version-0.5.4-blue)](https://github.com/rayketcham-lab/PKI-Signing-Service/releases/latest)
-[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-green)](LICENSE)
-[![MSRV](https://img.shields.io/badge/MSRV-1.88-red)](#building-from-source)
-[![Rust](https://img.shields.io/badge/language-Rust-orange)](https://www.rust-lang.org)
-[![No OpenSSL](https://img.shields.io/badge/openssl-none-brightgreen)](#security)
-
-Pure Rust code signing engine. Authenticode for Windows PE/CAB/MSI, detached CMS/PKCS#7, PowerShell scripts, RFC 3161 timestamping. Multi-algorithm: RSA, ECDSA P-256/P-384, Ed25519, ML-DSA (FIPS 204).
+**Pure Rust code signing engine** — Authenticode for Windows PE/CAB/MSI, detached CMS/PKCS#7, PowerShell scripts, RFC 3161 timestamping.
 
 No OpenSSL. No `signtool.exe`. No external dependencies. One binary.
+
+---
+
+### Project Health
+
+<!-- CI / Testing Pipeline -->
+[![CI](https://github.com/rayketcham-lab/PKI-Signing-Service/actions/workflows/ci.yml/badge.svg)](https://github.com/rayketcham-lab/PKI-Signing-Service/actions/workflows/ci.yml)
+[![Daily Health Check](https://github.com/rayketcham-lab/PKI-Signing-Service/actions/workflows/daily-health.yml/badge.svg)](https://github.com/rayketcham-lab/PKI-Signing-Service/actions/workflows/daily-health.yml)
+[![Interop Tests](https://github.com/rayketcham-lab/PKI-Signing-Service/actions/workflows/interop.yml/badge.svg)](https://github.com/rayketcham-lab/PKI-Signing-Service/actions/workflows/interop.yml)
+[![Security Regression](https://github.com/rayketcham-lab/PKI-Signing-Service/actions/workflows/security-regression.yml/badge.svg)](https://github.com/rayketcham-lab/PKI-Signing-Service/actions/workflows/security-regression.yml)
+
+<!-- Security & Compliance -->
+[![Security Audit](https://img.shields.io/badge/cargo--audit-passing-brightgreen?logo=hackthebox&logoColor=white)](https://rustsec.org/)
+[![Supply Chain](https://img.shields.io/badge/cargo--deny-passing-brightgreen?logo=checkmarx&logoColor=white)](https://embarkstudios.github.io/cargo-deny/)
+[![License Scan](https://img.shields.io/badge/license%20scan-clean-brightgreen?logo=opensourceinitiative&logoColor=white)](https://embarkstudios.github.io/cargo-deny/)
+[![No Unsafe](https://img.shields.io/badge/unsafe-zero-brightgreen?logo=rust&logoColor=white)](https://github.com/rayketcham-lab/PKI-Signing-Service)
+[![OpenSSL](https://img.shields.io/badge/OpenSSL-not%20required-brightgreen?logo=openssl&logoColor=white)](https://github.com/rayketcham-lab/PKI-Signing-Service)
+
+<!-- Project Info -->
+[![Version](https://img.shields.io/badge/version-0.5.4-blue?logo=semver&logoColor=white)](https://github.com/rayketcham-lab/PKI-Signing-Service/releases/latest)
+[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-green?logo=apache&logoColor=white)](LICENSE)
+[![Rust](https://img.shields.io/badge/language-Rust-orange?logo=rust&logoColor=white)](https://www.rust-lang.org/)
+[![MSRV](https://img.shields.io/badge/MSRV-1.88-orange?logo=rust&logoColor=white)](https://blog.rust-lang.org/)
+
+<!-- Build & Quality -->
+[![Clippy](https://img.shields.io/badge/clippy--D%20warnings-passing-brightgreen?logo=rust&logoColor=white)](https://github.com/rayketcham-lab/PKI-Signing-Service/actions/workflows/ci.yml)
+[![Formatting](https://img.shields.io/badge/rustfmt-checked-brightgreen?logo=rust&logoColor=white)](https://github.com/rayketcham-lab/PKI-Signing-Service/actions/workflows/ci.yml)
+[![PQC](https://img.shields.io/badge/post--quantum-ML--DSA-blueviolet?logo=quantcast&logoColor=white)](https://github.com/rayketcham-lab/PKI-Signing-Service)
+[![Static Binary](https://img.shields.io/badge/static%20binary-musl-blue?logo=linux&logoColor=white)](https://github.com/rayketcham-lab/PKI-Signing-Service/releases)
+[![Windows](https://img.shields.io/badge/Windows-supported-blue?logo=windows&logoColor=white)](https://github.com/rayketcham-lab/PKI-Signing-Service/releases)
+
+---
 
 ## Table of Contents
 
