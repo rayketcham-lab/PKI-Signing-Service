@@ -45,7 +45,8 @@ jobs:
       - name: Run interop tests (osslsigncode + openssl)
         run: cargo test --workspace -- osslsigncode_verify e2e_cross_verify e2e_interop e2e_openssl e2e_asn1_tree e2e_spc e2e_pe_checksum e2e_our_verifier_accepts
       - name: Run ignored interop tests (known failures, non-blocking)
-        run: cargo test --workspace -- --ignored e2e_interop_cab e2e_interop_msi 2>&1 || echo "Known interop gaps — see issues #45 and #46"
+        continue-on-error: true
+        run: cargo test --workspace -- --ignored e2e_interop_cab e2e_interop_msi
 
   interop-windows:
     name: Interop (Windows)
