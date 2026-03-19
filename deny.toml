@@ -74,7 +74,7 @@ deny = [
 
     # Legacy hash algorithms - allowed through specific compatibility wrappers
     # sha1: x509-cert parsing, PKCS#12/PFX, OAEP legacy
-    { name = "sha1", wrappers = ["pki-sign", "axum", "x509-cert", "p12", "p12-keystore", "zip"] },
+    { name = "sha1", wrappers = ["pki-sign", "p12", "p12-keystore", "zip"] },
 
     # Deprecated/insecure crates (no legitimate use)
     { name = "rust-crypto" },
@@ -87,33 +87,13 @@ deny = [
 
 # Skipping duplicate version checks for specific crates
 skip = [
-    # Common transitive dependencies with multiple versions
-    { name = "aead" },
-    { name = "aes" },
-    { name = "aes-gcm" },
-    { name = "cipher" },
-    { name = "ctr" },
-    { name = "digest" },
-    { name = "block-buffer" },
-    # Common version splits in the ecosystem
-    { name = "bitflags" },
-    { name = "hashbrown" },
+    # Actual duplicates in current dependency tree
+    { name = "cpufeatures" },
     { name = "getrandom" },
     { name = "rand" },
-    { name = "rand_chacha" },
     { name = "rand_core" },
-    { name = "cfg_aliases" },
-    { name = "heck" },
-    { name = "linux-raw-sys" },
-    { name = "nix" },
-    { name = "nom" },
     { name = "thiserror" },
     { name = "thiserror-impl" },
-    { name = "syn" },
-    # Transitive deps with version splits
-    { name = "winreg" },
-    { name = "x509-parser" },
-    { name = "socket2" },
     { name = "tower-http" },
 ]
 
