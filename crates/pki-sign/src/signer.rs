@@ -3364,6 +3364,10 @@ mod tests {
     /// supplied explicitly.
     #[tokio::test]
     async fn e2e_interop_cms_detached_verify_openssl_rsa() {
+        if cfg!(windows) {
+            eprintln!("skipping: openssl cms -verify uses /dev/null, Linux only");
+            return;
+        }
         if !has_openssl() {
             eprintln!("skipping: openssl CLI not available");
             return;
@@ -3446,6 +3450,10 @@ mod tests {
     /// verify the .p7s output with `openssl cms -verify`.
     #[tokio::test]
     async fn e2e_interop_cms_detached_verify_openssl_ecdsa() {
+        if cfg!(windows) {
+            eprintln!("skipping: openssl cms -verify uses /dev/null, Linux only");
+            return;
+        }
         if !has_openssl() {
             eprintln!("skipping: openssl CLI not available");
             return;
