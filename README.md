@@ -1,6 +1,13 @@
 # Code Signing Service
 
-![Version](https://img.shields.io/badge/version-0.5.3-blue) ![License](https://img.shields.io/badge/license-Apache--2.0-green) ![Language](https://img.shields.io/badge/language-Rust-orange) ![Dependencies](https://img.shields.io/badge/openssl-none-brightgreen) ![CI](https://img.shields.io/github/actions/workflow/status/rayketcham-lab/PKI-Signing-Service/ci.yml?branch=main&label=CI)
+[![CI](https://img.shields.io/github/actions/workflow/status/rayketcham-lab/PKI-Signing-Service/ci.yml?branch=main&label=CI)](https://github.com/rayketcham-lab/PKI-Signing-Service/actions/workflows/ci.yml)
+[![Daily Health Check](https://img.shields.io/github/actions/workflow/status/rayketcham-lab/PKI-Signing-Service/daily-health.yml?branch=main&label=Daily%20Check)](https://github.com/rayketcham-lab/PKI-Signing-Service/actions/workflows/daily-health.yml)
+[![Interop Tests](https://img.shields.io/github/actions/workflow/status/rayketcham-lab/PKI-Signing-Service/interop.yml?branch=main&label=Interop)](https://github.com/rayketcham-lab/PKI-Signing-Service/actions/workflows/interop.yml)
+[![Version](https://img.shields.io/badge/version-0.5.4-blue)](https://github.com/rayketcham-lab/PKI-Signing-Service/releases/latest)
+[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-green)](LICENSE)
+[![MSRV](https://img.shields.io/badge/MSRV-1.88-red)](#building-from-source)
+[![Rust](https://img.shields.io/badge/language-Rust-orange)](https://www.rust-lang.org)
+[![No OpenSSL](https://img.shields.io/badge/openssl-none-brightgreen)](#security)
 
 Pure Rust code signing engine. Authenticode for Windows PE/CAB/MSI, detached CMS/PKCS#7, PowerShell scripts, RFC 3161 timestamping. Multi-algorithm: RSA, ECDSA P-256/P-384, Ed25519, ML-DSA (FIPS 204).
 
@@ -308,7 +315,7 @@ Compatible with any RFC 3161 client --- `signtool.exe`, `openssl ts`, or this to
 ## CLI Reference
 
 ```
-pki-sign 0.5.3
+pki-sign 0.5.4
 Code Signing Service - Pure Rust Code Signing Engine
 
 USAGE:

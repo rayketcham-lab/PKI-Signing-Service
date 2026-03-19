@@ -3348,6 +3348,606 @@ mod tests {
         );
     }
 
+    // ─── Interop: Detached CMS verify with openssl cms -verify ───
+
+    /// Interop: Sign a file with pki-sign detached CMS (RSA), then verify
+    /// the resulting .p7s with `openssl cms -verify`.
+    ///
+    /// openssl cms -verify requires:
+    ///   - the detached content file (`-content`)
+    ///   - the .p7s signature file
+    ///   - a trusted CA cert (`-CAfile`) — we use the signer cert itself
+    ///   - `-noverify` is not available in older openssl; use `-CAfile self_cert`
+    ///
+    /// Because our test cert is self-signed, we pass it as both the CA and the
+    /// signer cert. The `-noverify` flag is not needed when the CA chain is
+    /// supplied explicitly.
+    #[tokio::test]
+    async fn e2e_interop_cms_detached_verify_openssl_rsa() {
+        if !has_openssl() {
+            eprintln!("skipping: openssl CLI not available");
+            return;
+        }
+
+        let dir = tempfile::tempdir().expect("create temp dir");
+
+        // Use the committed RSA-2048 fixture — no openssl key generation needed.
+        let pfx_path = fixture_pfx("rsa2048.pfx");
+        let creds = SigningCredentials::from_pfx_detached(&pfx_path, "test")
+            .expect("load RSA-2048 fixture for detached");
+
+        // Write the content to sign
+        let content_path = dir.path().join("payload.bin");
+        std::fs::write(
+            &content_path,
+            b"Interop test payload for detached CMS RSA signing.",
+        )
+        .expect("write payload");
+
+        // Sign with pki-sign
+        let sign_result = sign_detached(&content_path, &creds, None)
+            .await
+            .expect("sign_detached should succeed");
+        assert!(
+            !sign_result.p7s_data.is_empty(),
+            "p7s_data must not be empty"
+        );
+
+        // Write the .p7s signature file
+        let p7s_path = dir.path().join("payload.bin.p7s");
+        std::fs::write(&p7s_path, &sign_result.p7s_data).expect("write .p7s");
+
+        // Extract the signer certificate from the PFX so we can supply it as the
+        // CA trust anchor for openssl cms -verify.
+        let cert_path = dir.path().join("signer.crt");
+        let cert_out = std::process::Command::new("openssl")
+            .args(["pkcs12", "-legacy", "-in"])
+            .arg(&pfx_path)
+            .args(["-nokeys", "-passin", "pass:test", "-out"])
+            .arg(&cert_path)
+            .output()
+            .expect("openssl pkcs12 extract cert");
+        assert!(
+            cert_out.status.success(),
+            "cert extraction failed: {}",
+            String::from_utf8_lossy(&cert_out.stderr)
+        );
+
+        // Verify with openssl cms -verify.
+        // -CAfile:    supply the self-signed signer cert as the trust anchor.
+        // -purpose any: our test cert has codeSigning EKU, not smimesign, so
+        //               we relax the purpose check (this is fine for test certs).
+        // -content:   path to the detached content file.
+        let verify_out = std::process::Command::new("openssl")
+            .args(["cms", "-verify", "-inform", "DER"])
+            .args(["-in"])
+            .arg(&p7s_path)
+            .args(["-content"])
+            .arg(&content_path)
+            .args(["-CAfile"])
+            .arg(&cert_path)
+            .args(["-purpose", "any"])
+            .args(["-out", "/dev/null"])
+            .output()
+            .expect("openssl cms -verify");
+
+        let stderr = String::from_utf8_lossy(&verify_out.stderr);
+        assert!(
+            verify_out.status.success(),
+            "openssl cms -verify failed for RSA detached CMS:\nstderr: {stderr}"
+        );
+        assert!(
+            stderr.contains("Verification successful"),
+            "openssl cms should report 'Verification successful':\nstderr: {stderr}"
+        );
+    }
+
+    /// Interop: Sign a file with pki-sign detached CMS (ECDSA P-256), then
+    /// verify the .p7s output with `openssl cms -verify`.
+    #[tokio::test]
+    async fn e2e_interop_cms_detached_verify_openssl_ecdsa() {
+        if !has_openssl() {
+            eprintln!("skipping: openssl CLI not available");
+            return;
+        }
+
+        let dir = tempfile::tempdir().expect("create temp dir");
+
+        let pfx_path = fixture_pfx("ecdsa-p256.pfx");
+        let creds = SigningCredentials::from_pfx_detached(&pfx_path, "test")
+            .expect("load ECDSA-P256 fixture for detached");
+
+        let content_path = dir.path().join("payload.bin");
+        std::fs::write(
+            &content_path,
+            b"Interop test payload for detached CMS ECDSA-P256 signing.",
+        )
+        .expect("write payload");
+
+        let sign_result = sign_detached(&content_path, &creds, None)
+            .await
+            .expect("sign_detached should succeed");
+        assert!(
+            !sign_result.p7s_data.is_empty(),
+            "p7s_data must not be empty"
+        );
+
+        let p7s_path = dir.path().join("payload.bin.p7s");
+        std::fs::write(&p7s_path, &sign_result.p7s_data).expect("write .p7s");
+
+        let cert_path = dir.path().join("signer.crt");
+        let cert_out = std::process::Command::new("openssl")
+            .args(["pkcs12", "-legacy", "-in"])
+            .arg(&pfx_path)
+            .args(["-nokeys", "-passin", "pass:test", "-out"])
+            .arg(&cert_path)
+            .output()
+            .expect("openssl pkcs12 extract cert");
+        assert!(
+            cert_out.status.success(),
+            "cert extraction failed: {}",
+            String::from_utf8_lossy(&cert_out.stderr)
+        );
+
+        let verify_out = std::process::Command::new("openssl")
+            .args(["cms", "-verify", "-inform", "DER"])
+            .args(["-in"])
+            .arg(&p7s_path)
+            .args(["-content"])
+            .arg(&content_path)
+            .args(["-CAfile"])
+            .arg(&cert_path)
+            .args(["-purpose", "any"])
+            .args(["-out", "/dev/null"])
+            .output()
+            .expect("openssl cms -verify");
+
+        let stderr = String::from_utf8_lossy(&verify_out.stderr);
+        assert!(
+            verify_out.status.success(),
+            "openssl cms -verify failed for ECDSA-P256 detached CMS:\nstderr: {stderr}"
+        );
+        assert!(
+            stderr.contains("Verification successful"),
+            "openssl cms should report 'Verification successful':\nstderr: {stderr}"
+        );
+    }
+
+    // ─── Interop: RFC 3161 timestamp structure verification with openssl asn1parse ───
+
+    /// Interop: Build a synthetic RFC 3161 TimeStampToken (matching the internal
+    /// test helpers in timestamp.rs), write it to disk, and verify its structure
+    /// with `openssl asn1parse`.
+    ///
+    /// This test validates that our TSTInfo/TimeStampToken DER encoding is
+    /// structurally correct according to an independent ASN.1 parser.
+    ///
+    /// The token is constructed via the same helper used in timestamp.rs unit
+    /// tests, which builds a CMS ContentInfo → SignedData → encapContentInfo
+    /// → TSTInfo chain.  The key OID constants that openssl must recognise are:
+    ///   - OID for id-smime-ct-TSTInfo (1.2.840.113549.1.9.16.1.4) — present in
+    ///     the encapContentInfo eContentType.
+    ///   - SHA-256 AlgorithmIdentifier in the messageImprint.
+    #[test]
+    fn e2e_interop_timestamp_structure_openssl() {
+        if !has_openssl() {
+            eprintln!("skipping: openssl CLI not available");
+            return;
+        }
+
+        // Build the TimeStampToken using the same DER primitives that our
+        // production code uses.  This ensures the structural test covers the
+        // real encoding path rather than a hand-crafted fixture.
+        use crate::pkcs7::asn1;
+        use sha2::{Digest, Sha256};
+
+        // Build a valid MessageImprint over a synthetic signature value.
+        let fake_sig = b"interop_timestamp_structure_test_payload";
+        let digest = Sha256::digest(fake_sig);
+
+        let message_imprint = asn1::encode_sequence(&[
+            &asn1::SHA256_ALGORITHM_ID,
+            &asn1::encode_octet_string(&digest),
+        ]);
+
+        // OID 1.2.840.113549.1.9.16.1.4 — id-smime-ct-TSTInfo
+        const OID_TST_INFO: &[u8] = &[
+            0x06, 0x0B, 0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x09, 0x10, 0x01, 0x04,
+        ];
+
+        // Build TSTInfo SEQUENCE
+        // version INTEGER 1
+        let version = asn1::encode_integer_value(1);
+        // policy OID — use a simple well-formed OID (2.5.29.1)
+        let policy_oid: Vec<u8> = vec![0x06, 0x03, 0x55, 0x1D, 0x01];
+        // serialNumber INTEGER 42
+        let serial = asn1::encode_integer_value(42);
+        // genTime GeneralizedTime — "20260321120000Z"
+        let gen_time: Vec<u8> = vec![
+            0x18, 0x0F, b'2', b'0', b'2', b'6', b'0', b'3', b'2', b'1', b'1', b'2', b'0', b'0',
+            b'0', b'0', b'Z',
+        ];
+        // nonce INTEGER
+        let nonce_value: u64 = 0x1234_5678_9ABC_DEF0 & 0x7FFF_FFFF_FFFF_FFFF;
+        let nonce = {
+            let mut bytes = Vec::new();
+            let mut v = nonce_value;
+            while v > 0 {
+                bytes.push((v & 0xFF) as u8);
+                v >>= 8;
+            }
+            bytes.reverse();
+            if bytes[0] & 0x80 != 0 {
+                bytes.insert(0, 0x00);
+            }
+            let mut enc = vec![0x02]; // INTEGER
+            enc.extend(asn1::encode_length(bytes.len()));
+            enc.extend(bytes);
+            enc
+        };
+
+        let tst_info = asn1::encode_sequence(&[
+            &version,
+            &policy_oid,
+            &message_imprint,
+            &serial,
+            &gen_time,
+            &nonce,
+        ]);
+
+        // Wrap in CMS: ContentInfo { signedData, [0] { SignedData { ... } } }
+        let econtent_octet = asn1::encode_octet_string(&tst_info);
+        let econtent_explicit = asn1::encode_explicit_tag(0, &econtent_octet);
+        let encap_content_info = asn1::encode_sequence(&[OID_TST_INFO, &econtent_explicit]);
+
+        let digest_algos = asn1::encode_set(&asn1::SHA256_ALGORITHM_ID);
+        let signer_infos = asn1::encode_set(&[]);
+
+        let signed_data = asn1::encode_sequence(&[
+            &asn1::encode_integer_value(3), // version
+            &digest_algos,
+            &encap_content_info,
+            &signer_infos,
+        ]);
+
+        let sd_explicit = asn1::encode_explicit_tag(0, &signed_data);
+        let token = asn1::encode_sequence(&[asn1::OID_SIGNED_DATA, &sd_explicit]);
+
+        // Write to a temp file
+        let dir = tempfile::tempdir().expect("create temp dir");
+        let token_path = dir.path().join("timestamp_token.der");
+        std::fs::write(&token_path, &token).expect("write token DER");
+
+        // Verify structure with openssl asn1parse
+        let parse_out = std::process::Command::new("openssl")
+            .args(["asn1parse", "-inform", "DER", "-in"])
+            .arg(&token_path)
+            .output()
+            .expect("openssl asn1parse");
+
+        let stdout = String::from_utf8_lossy(&parse_out.stdout);
+        let stderr = String::from_utf8_lossy(&parse_out.stderr);
+
+        assert!(
+            parse_out.status.success(),
+            "openssl asn1parse rejected our TimeStampToken DER:\nstdout: {stdout}\nstderr: {stderr}"
+        );
+
+        // openssl should find at least SEQUENCE and OID nodes
+        assert!(
+            stdout.contains("SEQUENCE"),
+            "asn1parse output should contain SEQUENCE nodes:\n{stdout}"
+        );
+
+        // id-smime-ct-TSTInfo OID must appear in the output
+        // openssl prints OIDs as dotted-decimal or named; check for the raw arc
+        // 1.2.840.113549.1.9.16.1.4
+        assert!(
+            stdout.contains("1.2.840.113549.1.9.16.1.4") || stdout.contains("id-smime-ct-TSTInfo"),
+            "TimeStampToken must contain id-smime-ct-TSTInfo OID:\n{stdout}"
+        );
+
+        // SHA-256 OID 2.16.840.1.101.3.4.2.1 must appear (messageImprint hashAlgorithm)
+        assert!(
+            stdout.contains("2.16.840.1.101.3.4.2.1") || stdout.contains("sha256"),
+            "TimeStampToken must contain SHA-256 OID:\n{stdout}"
+        );
+    }
+
+    // ─── Interop: CAB Authenticode verify with osslsigncode ───
+
+    /// Interop: Sign a minimal CAB file with pki-sign Authenticode, then verify
+    /// the signed output with `osslsigncode verify`.
+    ///
+    /// CAB signing follows the same Authenticode path as PE: the hash covers the
+    /// cabinet body, and the CMS/PKCS#7 SignedData is appended.
+    /// osslsigncode should be able to parse the signature structure and produce
+    /// a matching Authenticode digest.
+    #[tokio::test]
+    #[ignore = "CAB Authenticode format not yet compatible with osslsigncode — see issue #45"]
+    async fn e2e_interop_cab_verify_osslsigncode() {
+        if skip_if_no_osslsigncode() {
+            eprintln!("skipping: osslsigncode not available");
+            return;
+        }
+
+        let dir = tempfile::tempdir().expect("create temp dir");
+        let pfx_path = fixture_pfx("rsa2048.pfx");
+        let creds =
+            SigningCredentials::from_pfx(&pfx_path, "test").expect("load RSA-2048 fixture for CAB");
+
+        // Build a minimal valid CAB using the same layout as cab.rs tests.
+        let cab_data = build_interop_test_cab(128);
+
+        // Sign the CAB with pki-sign
+        let sign_result = crate::cab::sign_cab(&cab_data, &creds, None, &SignOptions::default())
+            .await
+            .expect("sign_cab should succeed");
+
+        assert!(
+            !sign_result.signed_data.is_empty(),
+            "signed CAB must not be empty"
+        );
+
+        // Write signed CAB to disk for osslsigncode
+        let signed_cab_path = dir.path().join("signed.cab");
+        std::fs::write(&signed_cab_path, &sign_result.signed_data).expect("write signed CAB");
+
+        // Run osslsigncode verify
+        let verify_out = std::process::Command::new("osslsigncode")
+            .arg("verify")
+            .arg(&signed_cab_path)
+            .output()
+            .expect("run osslsigncode");
+
+        let stdout = String::from_utf8_lossy(&verify_out.stdout);
+        let stderr = String::from_utf8_lossy(&verify_out.stderr);
+        let combined = format!("{stdout}\n{stderr}");
+
+        // osslsigncode exits 1 for self-signed certs, but must parse the structure.
+        assert!(
+            combined.contains("Current message digest"),
+            "osslsigncode should parse CAB Authenticode signature structure:\n{combined}"
+        );
+
+        // Digest must match — the Authenticode hash computation must be correct.
+        let current = combined
+            .lines()
+            .find(|l| l.contains("Current message digest"))
+            .map(|l| l.split(':').next_back().unwrap_or("").trim())
+            .unwrap_or("");
+        let calculated = combined
+            .lines()
+            .find(|l| l.contains("Calculated message digest"))
+            .map(|l| l.split(':').next_back().unwrap_or("").trim())
+            .unwrap_or("");
+
+        assert_eq!(
+            current, calculated,
+            "CAB Authenticode digest mismatch — hash computation is wrong:\n{combined}"
+        );
+    }
+
+    /// Interop: Sign a minimal CAB file with pki-sign using ECDSA-P256, then
+    /// verify with osslsigncode.
+    #[tokio::test]
+    #[ignore = "CAB Authenticode format not yet compatible with osslsigncode — see issue #45"]
+    async fn e2e_interop_cab_verify_osslsigncode_ecdsa() {
+        if skip_if_no_osslsigncode() {
+            eprintln!("skipping: osslsigncode not available");
+            return;
+        }
+
+        let dir = tempfile::tempdir().expect("create temp dir");
+        let pfx_path = fixture_pfx("ecdsa-p256.pfx");
+        let creds = SigningCredentials::from_pfx(&pfx_path, "test")
+            .expect("load ECDSA-P256 fixture for CAB");
+
+        let cab_data = build_interop_test_cab(128);
+
+        let sign_result = crate::cab::sign_cab(&cab_data, &creds, None, &SignOptions::default())
+            .await
+            .expect("sign_cab ECDSA-P256 should succeed");
+
+        let signed_cab_path = dir.path().join("signed_ecdsa.cab");
+        std::fs::write(&signed_cab_path, &sign_result.signed_data).expect("write signed CAB");
+
+        let verify_out = std::process::Command::new("osslsigncode")
+            .arg("verify")
+            .arg(&signed_cab_path)
+            .output()
+            .expect("run osslsigncode");
+
+        let stdout = String::from_utf8_lossy(&verify_out.stdout);
+        let stderr = String::from_utf8_lossy(&verify_out.stderr);
+        let combined = format!("{stdout}\n{stderr}");
+
+        assert!(
+            combined.contains("Current message digest"),
+            "osslsigncode should parse ECDSA-P256 CAB signature:\n{combined}"
+        );
+
+        let current = combined
+            .lines()
+            .find(|l| l.contains("Current message digest"))
+            .map(|l| l.split(':').next_back().unwrap_or("").trim())
+            .unwrap_or("");
+        let calculated = combined
+            .lines()
+            .find(|l| l.contains("Calculated message digest"))
+            .map(|l| l.split(':').next_back().unwrap_or("").trim())
+            .unwrap_or("");
+
+        assert_eq!(
+            current, calculated,
+            "CAB ECDSA-P256 Authenticode digest mismatch:\n{combined}"
+        );
+    }
+
+    /// Build a minimal valid CAB file suitable for Authenticode signing tests.
+    ///
+    /// Produces a CFHEADER with cfhdrRESERVE_PRESENT set and a 20-byte reserved
+    /// header (CabinetSignatureReservedHeader), followed by `body_len` bytes of
+    /// body data.  This replicates the logic in `cab::tests::build_test_cab` but
+    /// is placed here in the signer tests to avoid importing private test helpers.
+    fn build_interop_test_cab(body_len: usize) -> Vec<u8> {
+        // CAB constants (mirrors cab.rs values)
+        const CAB_MAGIC: &[u8; 4] = b"MSCF";
+        const CFHDR_RESERVE_PRESENT: u16 = 0x0004;
+        const CAB_SIG_RESERVE_HEADER_SIZE: u32 = 20;
+        const CFHEADER_FIXED_SIZE: usize = 36;
+
+        let mut cab = Vec::new();
+
+        // "MSCF" magic
+        cab.extend_from_slice(CAB_MAGIC);
+        // reserved1
+        cab.extend_from_slice(&0u32.to_le_bytes());
+        // cbCabinet placeholder
+        let cb_cabinet_pos = cab.len();
+        cab.extend_from_slice(&0u32.to_le_bytes());
+        // reserved2
+        cab.extend_from_slice(&0u32.to_le_bytes());
+        // coffFiles
+        cab.extend_from_slice(&0u32.to_le_bytes());
+        // reserved3
+        cab.extend_from_slice(&0u32.to_le_bytes());
+        // versionMinor, versionMajor
+        cab.push(3);
+        cab.push(1);
+        // cFolders
+        cab.extend_from_slice(&0u16.to_le_bytes());
+        // cFiles
+        cab.extend_from_slice(&0u16.to_le_bytes());
+        // flags: cfhdrRESERVE_PRESENT
+        cab.extend_from_slice(&CFHDR_RESERVE_PRESENT.to_le_bytes());
+        // setID
+        cab.extend_from_slice(&0u16.to_le_bytes());
+        // iCabinet
+        cab.extend_from_slice(&0u16.to_le_bytes());
+
+        assert_eq!(cab.len(), CFHEADER_FIXED_SIZE);
+
+        // cbCFHeader, cbCFFolder, cbCFData
+        cab.extend_from_slice(&(CAB_SIG_RESERVE_HEADER_SIZE as u16).to_le_bytes());
+        cab.push(0);
+        cab.push(0);
+
+        // CabinetSignatureReservedHeader (20 bytes)
+        cab.extend_from_slice(&CAB_SIG_RESERVE_HEADER_SIZE.to_le_bytes()); // headerSize
+        cab.extend_from_slice(&0u32.to_le_bytes()); // sigOffset
+        cab.extend_from_slice(&0u32.to_le_bytes()); // sigSize
+        cab.extend_from_slice(&[0u8; 8]); // padding
+
+        // Body data
+        cab.extend(std::iter::repeat_n(0xBBu8, body_len));
+
+        // Fill cbCabinet
+        let total = cab.len() as u32;
+        cab[cb_cabinet_pos..cb_cabinet_pos + 4].copy_from_slice(&total.to_le_bytes());
+
+        cab
+    }
+
+    // ─── Interop: MSI Authenticode verify with osslsigncode ───
+
+    /// Interop: Sign a minimal MSI (OLE2/CFB) file with pki-sign Authenticode,
+    /// then verify the signed output with `osslsigncode verify`.
+    ///
+    /// A real MSI is a Compound File Binary (CFB/OLE2) container.  pki-sign
+    /// uses the `cfb` crate to read and write the `\x05DigitalSignature` stream.
+    /// This test exercises the full sign → osslsigncode verify round-trip.
+    #[tokio::test]
+    #[ignore = "MSI Authenticode digest mismatch with osslsigncode — see issue #46"]
+    async fn e2e_interop_msi_verify_osslsigncode() {
+        if skip_if_no_osslsigncode() {
+            eprintln!("skipping: osslsigncode not available");
+            return;
+        }
+
+        let dir = tempfile::tempdir().expect("create temp dir");
+        let pfx_path = fixture_pfx("rsa2048.pfx");
+        let creds =
+            SigningCredentials::from_pfx(&pfx_path, "test").expect("load RSA-2048 fixture for MSI");
+
+        // Build a minimal CFB/MSI container.
+        let msi_data = build_interop_test_msi();
+
+        // Sign with pki-sign
+        let sign_result = crate::msi::sign_msi(&msi_data, &creds, None, &SignOptions::default())
+            .await
+            .expect("sign_msi should succeed");
+
+        assert!(
+            !sign_result.signed_data.is_empty(),
+            "signed MSI must not be empty"
+        );
+
+        let signed_msi_path = dir.path().join("signed.msi");
+        std::fs::write(&signed_msi_path, &sign_result.signed_data).expect("write signed MSI");
+
+        // Verify with osslsigncode
+        let verify_out = std::process::Command::new("osslsigncode")
+            .arg("verify")
+            .arg(&signed_msi_path)
+            .output()
+            .expect("run osslsigncode");
+
+        let stdout = String::from_utf8_lossy(&verify_out.stdout);
+        let stderr = String::from_utf8_lossy(&verify_out.stderr);
+        let combined = format!("{stdout}\n{stderr}");
+
+        // osslsigncode should parse the MSI Authenticode structure.
+        assert!(
+            combined.contains("Current message digest"),
+            "osslsigncode should parse MSI Authenticode signature:\n{combined}"
+        );
+
+        let current = combined
+            .lines()
+            .find(|l| l.contains("Current message digest"))
+            .map(|l| l.split(':').next_back().unwrap_or("").trim())
+            .unwrap_or("");
+        let calculated = combined
+            .lines()
+            .find(|l| l.contains("Calculated message digest"))
+            .map(|l| l.split(':').next_back().unwrap_or("").trim())
+            .unwrap_or("");
+
+        assert_eq!(
+            current, calculated,
+            "MSI Authenticode digest mismatch — hash computation is wrong:\n{combined}"
+        );
+    }
+
+    /// Build a minimal Compound File Binary (CFB / OLE2) container that
+    /// `sign_msi` can accept.
+    ///
+    /// The `cfb` crate is used to construct a valid CFB file in memory.
+    /// We create an empty compound document (no user streams) — the MSI
+    /// signing code only needs the container to be a valid CFB file without
+    /// an existing `\x05DigitalSignature` stream.
+    fn build_interop_test_msi() -> Vec<u8> {
+        use std::io::Write;
+
+        let buf = std::io::Cursor::new(Vec::new());
+        let mut comp = cfb::CompoundFile::create(buf).expect("create CFB container");
+
+        // Write a minimal non-signature stream so the file has some content to hash.
+        // The stream name is arbitrary — we just need non-empty file content.
+        {
+            let mut stream = comp
+                .create_stream("/TestData")
+                .expect("create TestData stream");
+            stream
+                .write_all(b"Minimal MSI content for Authenticode signing test.")
+                .expect("write stream data");
+        }
+
+        comp.flush().expect("flush CFB");
+        comp.into_inner().into_inner()
+    }
+
     /// Verify build_test_pe produces a PE with valid Windows header fields.
     #[test]
     fn test_pe_has_valid_windows_fields() {

@@ -1,0 +1,125 @@
+name: Daily Health Check
+
+on:
+  schedule:
+    - cron: '0 6 * * *'  # 06:00 UTC daily
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  health-check:
+    name: Daily Health (${{ matrix.name }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux
+            runner: ubuntu-latest
+            os: Linux
+          - name: Windows
+            runner: windows-latest
+            os: Windows
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4.3.1
+
+      - name: Setup Rust (Linux)
+        if: matrix.os == 'Linux'
+        run: |
+          rustup default stable
+          rustup update stable
+
+      - name: Setup Rust (Windows)
+        if: matrix.os == 'Windows'
+        shell: powershell
+        run: |
+          rustup default stable
+          rustup update stable
+
+      - name: Report Rust version
+        run: rustc --version
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-daily-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-daily-
+            ${{ runner.os }}-cargo-
+
+      - name: Build release (Linux)
+        if: matrix.os == 'Linux'
+        run: cargo build --release
+
+      - name: Build release (Windows)
+        if: matrix.os == 'Windows'
+        shell: powershell
+        run: cargo build --release
+
+      - name: Run full test suite (Linux)
+        if: matrix.os == 'Linux'
+        run: cargo test --workspace
+
+      - name: Run full test suite (Windows)
+        if: matrix.os == 'Windows'
+        shell: powershell
+        run: cargo test --workspace
+
+      - name: Clippy (Linux)
+        if: matrix.os == 'Linux'
+        run: |
+          rustup component add clippy
+          cargo clippy --all-targets --workspace -- -D warnings
+
+      - name: Format check (Linux)
+        if: matrix.os == 'Linux'
+        run: |
+          rustup component add rustfmt
+          cargo fmt --all --check
+
+  audit:
+    name: Daily Security Audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4.3.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Rust
+        run: |
+          rustup default stable
+          rustup update stable
+
+      - name: Install audit tools
+        run: |
+          which cargo-audit || cargo install cargo-audit --locked
+          which cargo-deny || cargo install cargo-deny --locked
+
+      - name: Run cargo audit (no ignores)
+        env:
+          GITHUB_TOKEN: ""
+          GIT_TERMINAL_PROMPT: "0"
+        run: |
+          git config --unset-all http.https://github.com/.extraheader || true
+          git config --global --unset-all http.https://github.com/.extraheader || true
+          echo "=== Full audit (all advisories) ==="
+          cargo audit 2>&1 || true
+          echo ""
+          echo "=== Audit with accepted ignores ==="
+          cargo audit --ignore RUSTSEC-2023-0071 --ignore RUSTSEC-2025-0144
+
+      - name: Run cargo deny
+        run: cargo deny check
+
+      - name: Check for outdated dependencies
+        run: |
+          cargo install cargo-outdated --locked 2>/dev/null || true
+          cargo outdated --root-deps-only 2>&1 || echo "cargo-outdated not available, skipping"

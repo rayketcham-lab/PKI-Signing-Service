@@ -3,8 +3,9 @@ resolver = "2"
 members = ["crates/pki-sign"]
 
 [workspace.package]
-version = "0.5.3"
+version = "0.5.4"
 edition = "2021"
+rust-version = "1.88"
 license = "Apache-2.0"
 repository = "https://github.com/rayketcham-lab/PKI-Signing-Service"
 

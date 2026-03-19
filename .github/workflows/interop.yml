@@ -1,0 +1,91 @@
+name: Interop Tests
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+concurrency:
+  group: interop-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  interop-linux:
+    name: Interop (Linux)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4.3.1
+      - name: Setup Rust
+        run: |
+          rustup default stable
+          rustup update stable
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-interop-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-interop-
+            ${{ runner.os }}-cargo-
+      - name: Install interop tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y osslsigncode
+          osslsigncode --version
+          openssl version
+      - name: Run interop tests (osslsigncode + openssl)
+        run: cargo test --workspace -- osslsigncode_verify e2e_cross_verify e2e_interop e2e_openssl e2e_asn1_tree e2e_spc e2e_pe_checksum e2e_our_verifier_accepts
+      - name: Run ignored interop tests (known failures, non-blocking)
+        run: cargo test --workspace -- --ignored e2e_interop_cab e2e_interop_msi 2>&1 || echo "Known interop gaps — see issues #45 and #46"
+
+  interop-windows:
+    name: Interop (Windows)
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4.3.1
+      - name: Setup Rust
+        shell: powershell
+        run: |
+          rustup default stable
+          rustup update stable
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~\.cargo\registry
+            ~\.cargo\git
+            target
+          key: ${{ runner.os }}-interop-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-interop-
+            ${{ runner.os }}-cargo-
+      - name: Build release
+        shell: powershell
+        run: cargo build --release
+      - name: Run tests
+        shell: powershell
+        run: cargo test --workspace
+      - name: Verify signtool available
+        shell: powershell
+        run: |
+          $signtool = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\bin" -Recurse -Filter "signtool.exe" | Select-Object -First 1
+          if ($signtool) {
+            Write-Host "signtool found: $($signtool.FullName)"
+          } else {
+            Write-Host "signtool not found on this runner"
+          }
+      - name: Verify PowerShell Get-AuthenticodeSignature available
+        shell: powershell
+        run: |
+          $ver = $PSVersionTable.PSVersion
+          Write-Host "PowerShell version: $ver"
+          Write-Host "Get-AuthenticodeSignature available: $(Get-Command Get-AuthenticodeSignature -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Name)"
