@@ -11,7 +11,7 @@
 
 **Do not open a public issue for security vulnerabilities.**
 
-Email security reports to: **ray@rayketcham.com**
+Email security reports to: **security@quantumnexum.com**
 
 Include:
 - Description of the vulnerability
