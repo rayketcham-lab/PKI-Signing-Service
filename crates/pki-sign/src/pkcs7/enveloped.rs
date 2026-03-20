@@ -1166,9 +1166,10 @@ fn encode_context_integer(tag: u8, value: u32) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::crypto::rsa_oaep::OaepHash;
 
-    // Helper: generate a minimal self-signed RSA certificate for testing
+    // Helper: generate a minimal self-signed RSA certificate for testing.
+    // Scaffolded for upcoming RSA enveloped-data round-trip tests.
+    #[allow(dead_code)]
     fn make_rsa_test_cert() -> (Vec<u8>, Vec<u8>) {
         use pkcs8::EncodePrivateKey;
         use rsa::pkcs8::EncodePublicKey;

@@ -153,7 +153,7 @@ pub async fn sign_msi(
     data: &[u8],
     credentials: &SigningCredentials,
     tsa_config: Option<&TsaConfig>,
-    options: &SignOptions,
+    _options: &SignOptions,
 ) -> SignResult<MsiSignResult> {
     // Check if already signed
     {

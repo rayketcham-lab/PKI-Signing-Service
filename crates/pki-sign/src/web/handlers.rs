@@ -1527,7 +1527,6 @@ mod tests {
 
     /// Issue a GET request against the router and return the response.
     async fn get(state: Arc<AppState>, uri: &str) -> axum::response::Response {
-        use http_body_util::BodyExt as _;
         use tower::ServiceExt as _;
 
         let router = crate::web::build_router(state);
@@ -1561,6 +1560,8 @@ mod tests {
     /// Build a minimal multipart/form-data body with a single `file` field.
     ///
     /// Returns `(content_type_header, body_bytes)`.
+    /// Scaffolded for upcoming multipart upload handler tests.
+    #[allow(dead_code)]
     fn build_multipart_with_file(filename: &str, data: &[u8]) -> (String, Vec<u8>) {
         let boundary = "testboundary1234567890";
         let content_type = format!("multipart/form-data; boundary={boundary}");

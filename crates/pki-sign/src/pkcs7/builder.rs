@@ -1045,7 +1045,7 @@ fn build_signed_attrs_sorted(
 /// 4. CMSAlgorithmProtection (RFC 8933) — prevents algorithm substitution attacks
 fn build_signed_attrs_content(
     image_hash: &[u8],
-    signing_alg: SigningAlgorithm,
+    _signing_alg: SigningAlgorithm,
     program_name: Option<&str>,
     program_url: Option<&str>,
     signing_time_der: &[u8],
@@ -1100,7 +1100,7 @@ fn build_signed_attrs_content(
 /// 4. CMSAlgorithmProtection (RFC 8933)
 fn build_detached_signed_attrs_content(
     content_digest: &[u8],
-    signing_alg: SigningAlgorithm,
+    _signing_alg: SigningAlgorithm,
     signing_time_der: &[u8],
 ) -> Vec<u8> {
     // Attribute 1: contentType = id-data
@@ -1124,6 +1124,9 @@ fn build_detached_signed_attrs_content(
 }
 
 /// Build the CMSAlgorithmProtection signed attribute (RFC 8933) — legacy single-algorithm.
+///
+/// Retained for future use when single-algorithm CMS protection is needed directly.
+#[allow(dead_code)]
 fn build_cms_algorithm_protection_attr(signing_alg: SigningAlgorithm) -> Vec<u8> {
     build_cms_algorithm_protection_attr_ex(signing_alg.digest_algorithm(), signing_alg)
 }
@@ -1915,6 +1918,9 @@ fn build_test_cert(serial: u32, cn: &str) -> Vec<u8> {
 }
 
 /// Build a test cert with SubjectKeyIdentifier extension for SKI-based tests.
+/// Scaffolded for upcoming SKI-based recipient lookup tests.
+#[allow(dead_code)]
+#[cfg(test)]
 fn build_test_cert_with_ski(serial: u32, cn: &str) -> Vec<u8> {
     let version = asn1::encode_explicit_tag(0, &asn1::encode_integer_value(2));
     let serial_der = asn1::encode_integer_value(serial);
@@ -3567,7 +3573,7 @@ mod tests {
             custom_unsigned_attributes: Vec::new(),
         });
 
-        let result = builder.build(|_idx, attrs| Ok(vec![0xAA; 64])).unwrap();
+        let result = builder.build(|_idx, _attrs| Ok(vec![0xAA; 64])).unwrap();
         assert_eq!(result[0], 0x30); // SEQUENCE
 
         // Must contain SHA3-256 AlgorithmIdentifier in DigestAlgorithms SET

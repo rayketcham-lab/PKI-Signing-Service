@@ -42,9 +42,13 @@ impl Default for TsaConfig {
 // ─── OID constants for TSA ───
 
 /// OID 2.16.840.1.101.3.4.2.1 — id-sha256
+/// Part of TSA OID registry; retained for future algorithm negotiation.
+#[allow(dead_code)]
 const OID_SHA256_BYTES: &[u8] = &[0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x01];
 
 /// OID 1.2.840.113549.1.9.16.1.4 — id-smime-ct-TSTInfo
+/// Part of TSA OID registry; retained for future TSTInfo content-type validation.
+#[allow(dead_code)]
 const OID_TST_INFO: &[u8] = &[
     0x06, 0x0B, 0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x09, 0x10, 0x01, 0x04,
 ];
@@ -66,6 +70,8 @@ const OID_TST_INFO_CONTENT: &[u8] = &[
 pub const OID_TSP_V1_POLICY: &[u8] = &[0x06, 0x06, 0x04, 0x00, 0x8F, 0x67, 0x01, 0x01];
 
 /// OID content bytes (without tag+length) for id-tsp-v1.
+/// Part of TSA OID registry; retained alongside OID_TSP_V1_POLICY for policy validation.
+#[allow(dead_code)]
 const OID_TSP_V1_POLICY_CONTENT: &[u8] = &[0x04, 0x00, 0x8F, 0x67, 0x01, 0x01];
 
 /// Build a DER-encoded TimeStampReq per RFC 3161 Section 2.4.1.

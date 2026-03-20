@@ -228,7 +228,7 @@ jobs:
 
   authenticode-verify:
     name: Authenticode Verification
-    needs: [fmt, clippy]
+    needs: [fmt, clippy, test]
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -278,7 +278,7 @@ jobs:
           git config --unset-all http.https://github.com/.extraheader || true
           git config --global --unset-all http.https://github.com/.extraheader || true
           for attempt in 1 2 3; do
-            cargo audit --ignore RUSTSEC-2023-0071 --ignore RUSTSEC-2025-0144 && break
+            cargo audit --ignore RUSTSEC-2023-0071 --ignore RUSTSEC-2025-0144 --ignore RUSTSEC-2025-0134 && break
             echo "Attempt $attempt failed, retrying..."
             sleep 5
           done

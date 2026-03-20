@@ -18,7 +18,6 @@ use base64::Engine;
 use sha2::{Digest, Sha256};
 
 use crate::error::{SignError, SignResult};
-use crate::pkcs7::asn1;
 use crate::pkcs7::Pkcs7Builder;
 use crate::signer::{SignOptions, SigningCredentials, SigningResult};
 use crate::timestamp::TsaConfig;
@@ -147,7 +146,7 @@ pub async fn sign_ps1(
     output_path: &Path,
     credentials: &SigningCredentials,
     tsa_config: Option<&TsaConfig>,
-    options: &SignOptions,
+    _options: &SignOptions,
 ) -> SignResult<SigningResult> {
     // Strip UTF-8 BOM (0xEF 0xBB 0xBF) if present — Windows editors commonly
     // add BOMs to .ps1 files, and they must be excluded from the hash computation

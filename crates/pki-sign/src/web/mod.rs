@@ -249,6 +249,14 @@ pub async fn run_server(config: SignConfig) -> Result<(), Box<dyn std::error::Er
         tracing::warn!("Development mode ENABLED — LDAP bypassed, admin routes open");
     }
 
+    if config.ldap.enabled && config.ldap.trusted_proxies.is_empty() {
+        tracing::warn!(
+            "SECURITY: LDAP enabled but trusted_proxies is empty — \
+             LDAP headers will be accepted from ANY client IP. \
+             Configure trusted_proxies to restrict header trust to your reverse proxy."
+        );
+    }
+
     // 6. Build shared state
     let state = Arc::new(AppState {
         config,

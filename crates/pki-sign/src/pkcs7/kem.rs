@@ -661,7 +661,7 @@ mod tests {
     fn test_build_and_parse_kem_recipient_info() {
         // Build a self-signed test cert for recipient identification
         let test_cert = build_test_cert();
-        let test_pub_key = vec![0x04; 65]; // fake EC point
+        let _test_pub_key = vec![0x04; 65]; // fake EC point
 
         let recipient = KemRecipientInfo {
             recipient_cert_der: test_cert.clone(),

@@ -18,7 +18,7 @@
 //! - Certificate Table directory entry (RVA + size) must be updated
 
 use super::parser::PeInfo;
-use crate::error::{SignError, SignResult};
+use crate::error::SignResult;
 
 /// WIN_CERTIFICATE revision for PKCS#7.
 const WIN_CERT_REVISION_2_0: u16 = 0x0200;

@@ -79,7 +79,7 @@ struct CabInfo {
     /// Offset within the reserved header where sigSize lives.
     sig_size_pos: usize,
     /// Size of the per-header reserved area (cbCFHeader).
-    cb_cf_header: u16,
+    _cb_cf_header: u16,
     /// End of the cabinet data (before any appended signature).
     end_of_cab: usize,
 }
@@ -167,7 +167,7 @@ fn parse_cab_header(data: &[u8]) -> SignResult<CabInfo> {
             cb_cabinet,
             sig_offset_pos,
             sig_size_pos,
-            cb_cf_header,
+            _cb_cf_header: cb_cf_header,
             end_of_cab,
         })
     } else {
@@ -261,7 +261,7 @@ pub async fn sign_cab(
     data: &[u8],
     credentials: &SigningCredentials,
     tsa_config: Option<&TsaConfig>,
-    options: &SignOptions,
+    _options: &SignOptions,
 ) -> SignResult<CabSignResult> {
     let cab_info = parse_cab_header(data)?;
 
@@ -384,7 +384,7 @@ mod tests {
     fn test_parse_valid_cab() {
         let cab = build_test_cab(64);
         let info = parse_cab_header(&cab).unwrap();
-        assert_eq!(info.cb_cf_header, CAB_SIG_RESERVE_HEADER_SIZE as u16);
+        assert_eq!(info._cb_cf_header, CAB_SIG_RESERVE_HEADER_SIZE as u16);
         assert_eq!(info.end_of_cab, cab.len());
     }
 
