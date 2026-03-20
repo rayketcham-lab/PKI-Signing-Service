@@ -3,7 +3,7 @@ name = "pki-sign"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Code Signing Service - Pure Rust Code Signing Engine"
+description = "PKI Signing Service - Pure Rust Code Signing Engine"
 repository.workspace = true
 
 [dependencies]

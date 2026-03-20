@@ -126,7 +126,7 @@ jobs:
           TAG: ${{ steps.tag.outputs.tag }}
         run: |
           gh release create "$TAG" \
-            --title "Code Signing Service $TAG" \
+            --title "PKI Signing Service $TAG" \
             --generate-notes \
             artifacts/linux-binaries/* \
             artifacts/windows-binaries/*

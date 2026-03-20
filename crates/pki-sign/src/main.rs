@@ -33,7 +33,7 @@ use pki_sign::tsa_http::TsaHttpConfig;
 #[derive(Parser)]
 #[command(
     name = "pki-sign",
-    about = "Code Signing Service - Pure Rust Code Signing Engine",
+    about = "PKI Signing Service - Pure Rust Code Signing Engine",
     version
 )]
 struct Cli {

@@ -1,4 +1,4 @@
-# Code Signing Service
+# PKI Signing Service
 
 **Pure Rust code signing engine** — Authenticode for Windows PE/CAB/MSI, detached CMS/PKCS#7, PowerShell scripts, RFC 3161 timestamping.
 
@@ -339,7 +339,7 @@ Compatible with any RFC 3161 client --- `signtool.exe`, `openssl ts`, or this to
 
 ```
 pki-sign 0.5.4
-Code Signing Service - Pure Rust Code Signing Engine
+PKI Signing Service - Pure Rust Code Signing Engine
 
 USAGE:
     pki-sign <COMMAND>
@@ -468,7 +468,7 @@ cargo fmt --all --check
 ```ini
 # /etc/systemd/system/pki-sign.service
 [Unit]
-Description=Code Signing Service
+Description=PKI Signing Service
 After=network.target
 
 [Service]

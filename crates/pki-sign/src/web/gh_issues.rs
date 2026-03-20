@@ -92,7 +92,7 @@ impl GitHubIssueReporter {
              \n### Error Message\n\n\
              ```\n{safe_error_message}\n```\n\n\
              ---\n\
-             *This issue was automatically created by Code Signing Service.*",
+             *This issue was automatically created by PKI Signing Service.*",
             timestamp = chrono::Utc::now().to_rfc3339(),
         );
 
@@ -147,7 +147,7 @@ impl GitHubIssueReporter {
         let full_body = format!(
             "{body}\n\n---\n\
              *Reported by: {}*\n\
-             *Submitted via Code Signing Service issue reporter.*",
+             *Submitted via PKI Signing Service issue reporter.*",
             reporter.unwrap_or("anonymous"),
         );
 
