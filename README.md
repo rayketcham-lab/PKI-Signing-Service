@@ -60,7 +60,7 @@ No OpenSSL. No `signtool.exe`. No external dependencies. One binary.
 - **Detached CMS/PKCS#7** --- Sign any file with a `.p7s` detached signature
 - **PowerShell signing** --- PS1 scripts with Base64 PKCS#7 signature blocks
 - **RFC 3161 timestamping** --- Counter-signatures for long-term validity
-- **Multi-algorithm** --- RSA (2048-4096), ECDSA P-256/P-384, Ed25519, ML-DSA-44/65/87
+- **Multi-algorithm** --- RSA (2048-4096), ECDSA P-256/P-384/P-521, Ed25519, ML-DSA-44/65/87
 - **Signature verification** --- Validate Authenticode and detached CMS signatures
 - **PFX/PKCS#12 import** --- Load signing credentials from `.pfx` files
 - **Web service mode** --- REST API for Code Signing as a Service
@@ -424,7 +424,7 @@ COMMANDS:
 
 ## Security
 
-- **No OpenSSL** --- Pure Rust crypto stack (`rsa`, `p256`, `p384`, `ed25519-dalek`, `ml-dsa`, `sha2`, `aes-gcm`). TLS via `rustls` with `aws-lc-rs` backend.
+- **No OpenSSL** --- Pure Rust crypto stack (`rsa`, `p256`, `p384`, `p521`, `ed25519-dalek`, `ml-dsa`, `sha2`, `aes-gcm`). TLS via `rustls` with `aws-lc-rs` backend.
 - **OpenSSL banned** --- `cargo-deny` blocks `openssl`, `openssl-sys`, and `native-tls` crate usage.
 - **Key zeroization** --- Private keys wrapped in `Zeroizing<>` for secure memory cleanup.
 - **Audit trail** --- Every sign/verify operation logged with request ID, file hash, signer, timestamp status, and duration.

@@ -1479,6 +1479,209 @@ mod tests {
     use super::*;
     use crate::config::{LdapConfig, SignConfig};
 
+    // ─── E2E HTTP tests ──────────────────────────────────────────────────────
+
+    /// Build a minimal [`AppState`] suitable for HTTP handler tests.
+    ///
+    /// `dev_mode = true` is set so LDAP middleware is bypassed in debug builds,
+    /// which is always the case when running `cargo test`.
+    ///
+    /// The audit log is written to a temporary file so tests are self-contained.
+    fn make_test_state(
+        credentials: Vec<(String, crate::signer::SigningCredentials)>,
+    ) -> Arc<AppState> {
+        let tmp = tempfile::NamedTempFile::new().expect("tempfile");
+        let audit_path = tmp.path().to_path_buf();
+        // Keep the NamedTempFile alive by leaking it for the test lifetime.
+        // In tests the process exits shortly after anyway.
+        std::mem::forget(tmp);
+
+        // dev_mode=true bypasses LDAP middleware in debug (test) builds.
+        let config = SignConfig {
+            dev_mode: true,
+            require_timestamp: false,
+            audit_log: audit_path.clone(),
+            ..SignConfig::default()
+        };
+
+        Arc::new(AppState {
+            config,
+            credentials: tokio::sync::RwLock::new(credentials),
+            default_credential: tokio::sync::RwLock::new(0),
+            audit: crate::web::audit::AuditLogger::new(&audit_path).expect("audit logger"),
+            started_at: std::time::Instant::now(),
+            stats: crate::web::SigningStats::default(),
+            gh_reporter: None,
+        })
+    }
+
+    /// Load the RSA-2048 test fixture credential.
+    fn load_test_credential() -> (String, crate::signer::SigningCredentials) {
+        // Path is relative to the workspace root during `cargo test`.
+        let fixture =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/rsa2048.pfx");
+        let cred = crate::signer::SigningCredentials::from_pfx(&fixture, "test")
+            .expect("rsa2048.pfx with password 'test'");
+        ("test".to_string(), cred)
+    }
+
+    /// Issue a GET request against the router and return the response.
+    async fn get(state: Arc<AppState>, uri: &str) -> axum::response::Response {
+        use http_body_util::BodyExt as _;
+        use tower::ServiceExt as _;
+
+        let router = crate::web::build_router(state);
+        let request = axum::http::Request::builder()
+            .method("GET")
+            .uri(uri)
+            .body(axum::body::Body::empty())
+            .unwrap();
+        router.oneshot(request).await.unwrap()
+    }
+
+    /// Issue a POST request with an arbitrary body against the router.
+    async fn post_raw(
+        state: Arc<AppState>,
+        uri: &str,
+        content_type: &str,
+        body: Vec<u8>,
+    ) -> axum::response::Response {
+        use tower::ServiceExt as _;
+
+        let router = crate::web::build_router(state);
+        let request = axum::http::Request::builder()
+            .method("POST")
+            .uri(uri)
+            .header(axum::http::header::CONTENT_TYPE, content_type)
+            .body(axum::body::Body::from(body))
+            .unwrap();
+        router.oneshot(request).await.unwrap()
+    }
+
+    /// Build a minimal multipart/form-data body with a single `file` field.
+    ///
+    /// Returns `(content_type_header, body_bytes)`.
+    fn build_multipart_with_file(filename: &str, data: &[u8]) -> (String, Vec<u8>) {
+        let boundary = "testboundary1234567890";
+        let content_type = format!("multipart/form-data; boundary={boundary}");
+
+        let mut body = Vec::new();
+        // Part header
+        body.extend_from_slice(
+            format!(
+                "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"{filename}\"\r\nContent-Type: application/octet-stream\r\n\r\n",
+            )
+            .as_bytes(),
+        );
+        body.extend_from_slice(data);
+        body.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
+
+        (content_type, body)
+    }
+
+    #[tokio::test]
+    async fn test_health_endpoint() {
+        let state = make_test_state(vec![]);
+        let resp = get(state, "/api/v1/health").await;
+        assert_eq!(resp.status(), axum::http::StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_status_endpoint() {
+        use http_body_util::BodyExt as _;
+
+        let state = make_test_state(vec![]);
+        let resp = get(state, "/api/v1/status").await;
+        assert_eq!(resp.status(), axum::http::StatusCode::OK);
+
+        // Body must be valid JSON with the expected fields.
+        let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+        let json: serde_json::Value = serde_json::from_slice(&bytes).expect("status body is JSON");
+        assert_eq!(json["status"], "running");
+        assert!(json["uptime_seconds"].is_number());
+        assert!(json["version"].is_string());
+    }
+
+    #[tokio::test]
+    async fn test_sign_endpoint_no_file_returns_400() {
+        // Posting with the wrong content-type causes the multipart extractor to
+        // reject the request with 400 Bad Request before any handler logic runs.
+        let state = make_test_state(vec![]);
+        let resp = post_raw(state, "/api/v1/sign", "application/json", b"{}".to_vec()).await;
+        assert_eq!(resp.status(), axum::http::StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn test_verify_endpoint_no_file_returns_400() {
+        // Same as sign: wrong content-type produces a multipart rejection (400).
+        let state = make_test_state(vec![]);
+        let resp = post_raw(state, "/api/v1/verify", "application/json", b"{}".to_vec()).await;
+        assert_eq!(resp.status(), axum::http::StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn test_certificate_endpoint_no_credentials() {
+        use http_body_util::BodyExt as _;
+
+        let state = make_test_state(vec![]);
+        let resp = get(state, "/api/v1/certificate").await;
+        assert_eq!(resp.status(), axum::http::StatusCode::OK);
+
+        let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+        let json: serde_json::Value =
+            serde_json::from_slice(&bytes).expect("certificate body is JSON");
+        // No credentials — should report the error key.
+        assert_eq!(json["error"], "no_certificates");
+    }
+
+    #[tokio::test]
+    async fn test_certificate_endpoint_with_credentials() {
+        use http_body_util::BodyExt as _;
+
+        let cred = load_test_credential();
+        let state = make_test_state(vec![cred]);
+        let resp = get(state, "/api/v1/certificate").await;
+        assert_eq!(resp.status(), axum::http::StatusCode::OK);
+
+        let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+        let json: serde_json::Value =
+            serde_json::from_slice(&bytes).expect("certificate body is JSON");
+
+        let certs = json["certificates"].as_array().expect("certificates array");
+        assert_eq!(certs.len(), 1);
+        assert_eq!(certs[0]["name"], "test");
+        assert!(certs[0]["fingerprint_sha256"].is_string());
+        assert!(certs[0]["cert_size_bytes"].is_number());
+    }
+
+    #[tokio::test]
+    async fn test_sign_endpoint_empty_multipart_returns_500() {
+        // A valid multipart request with no `file` field reaches the handler and
+        // returns 500 (Internal: "No file uploaded").
+        let state = make_test_state(vec![load_test_credential()]);
+        let boundary = "testbnd";
+        let content_type = format!("multipart/form-data; boundary={boundary}");
+        // Empty multipart — just the closing delimiter.
+        let body = format!("--{boundary}--\r\n").into_bytes();
+
+        let resp = post_raw(state, "/api/v1/sign", &content_type, body).await;
+        assert_eq!(resp.status(), axum::http::StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    #[tokio::test]
+    async fn test_fallback_returns_404() {
+        use http_body_util::BodyExt as _;
+
+        let state = make_test_state(vec![]);
+        let resp = get(state, "/api/v1/nonexistent-endpoint").await;
+        assert_eq!(resp.status(), axum::http::StatusCode::NOT_FOUND);
+
+        let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+        let json: serde_json::Value =
+            serde_json::from_slice(&bytes).expect("fallback body is JSON");
+        assert_eq!(json["error"], "not_found");
+    }
+
     fn make_user(groups: Vec<String>, is_admin: bool) -> UserInfo {
         let config = LdapConfig {
             cert_groups: [("server".into(), "cn=server-signers".into())]

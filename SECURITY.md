@@ -37,7 +37,7 @@ You should receive an acknowledgment within 48 hours. We aim to release a fix wi
 ## Cryptographic Standards
 
 - RSA: 2048, 3072, 4096-bit keys
-- ECDSA: P-256, P-384 (NIST curves)
+- ECDSA: P-256, P-384, P-521 (NIST curves)
 - EdDSA: Ed25519
 - Post-quantum: ML-DSA-44/65/87 (FIPS 204)
 - Hash algorithms: SHA-256, SHA-384, SHA-512, SHA3-256/384/512

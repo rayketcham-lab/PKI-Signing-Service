@@ -50,6 +50,7 @@ sha3 = "0.10"
 rsa = "0.9"
 p256 = { version = "0.13", features = ["ecdsa", "pem", "ecdh"] }
 p384 = { version = "0.13", features = ["ecdsa", "pem", "ecdh"] }
+p521 = { version = "0.13", features = ["ecdsa", "pem", "ecdh"] }
 ed25519-dalek = { version = "2", features = ["pkcs8"] }
 ml-dsa = { version = "0.0.4", features = ["pkcs8"] }
 signature = "2"

@@ -19,6 +19,7 @@ use zeroize::Zeroizing;
 
 use p256::ecdsa::SigningKey as P256SigningKey;
 use p384::ecdsa::SigningKey as P384SigningKey;
+use p521::ecdsa::SigningKey as P521SigningKey;
 
 use ed25519_dalek::SigningKey as Ed25519SigningKey;
 use ml_dsa::{MlDsa44, MlDsa65, MlDsa87, SigningKey as MlDsaSigningKey};
@@ -71,6 +72,8 @@ pub enum PrivateKey {
     EcdsaP256(p256::SecretKey),
     /// ECDSA P-384 private key.
     EcdsaP384(p384::SecretKey),
+    /// ECDSA P-521 private key.
+    EcdsaP521(p521::SecretKey),
     /// Ed25519 private key (RFC 8032).
     Ed25519(Ed25519SigningKey),
     /// ML-DSA-44 private key (FIPS 204, security category 2).
@@ -87,6 +90,7 @@ impl std::fmt::Debug for PrivateKey {
             PrivateKey::Rsa(_) => f.write_str("PrivateKey::Rsa([REDACTED])"),
             PrivateKey::EcdsaP256(_) => f.write_str("PrivateKey::EcdsaP256([REDACTED])"),
             PrivateKey::EcdsaP384(_) => f.write_str("PrivateKey::EcdsaP384([REDACTED])"),
+            PrivateKey::EcdsaP521(_) => f.write_str("PrivateKey::EcdsaP521([REDACTED])"),
             PrivateKey::Ed25519(_) => f.write_str("PrivateKey::Ed25519([REDACTED])"),
             PrivateKey::MlDsa44(_) => f.write_str("PrivateKey::MlDsa44([REDACTED])"),
             PrivateKey::MlDsa65(_) => f.write_str("PrivateKey::MlDsa65([REDACTED])"),
@@ -97,10 +101,10 @@ impl std::fmt::Debug for PrivateKey {
 
 /// Loaded signing credentials from a PFX file.
 ///
-/// Supports RSA, ECDSA P-256, ECDSA P-384, Ed25519, and ML-DSA-44/65/87 private keys.
+/// Supports RSA, ECDSA P-256, ECDSA P-384, ECDSA P-521, Ed25519, and ML-DSA-44/65/87 private keys.
 /// Key material is automatically zeroized on drop: `RsaPrivateKey` implements
 /// `Drop` which zeroizes `d`, `primes`, and `precomputed` fields.
-/// ECDSA secret keys (`p256::SecretKey`, `p384::SecretKey`) implement `Zeroize`.
+/// ECDSA secret keys (`p256::SecretKey`, `p384::SecretKey`, `p521::SecretKey`) implement `Zeroize`.
 /// The PFX key bytes are loaded via `Zeroizing<Vec<u8>>` in `load_pfx`.
 pub struct SigningCredentials {
     /// Private key for signing.
@@ -191,6 +195,12 @@ impl SigningCredentials {
                 let signature: p384::ecdsa::Signature = signing_key.sign(data);
                 Ok(signature.to_der().as_bytes().to_vec())
             }
+            PrivateKey::EcdsaP521(secret_key) => {
+                let signing_key = P521SigningKey::from_slice(secret_key.to_bytes().as_ref())
+                    .map_err(|e| SignError::Internal(format!("P521 key init: {e}")))?;
+                let signature: p521::ecdsa::Signature = signing_key.sign(data);
+                Ok(signature.to_der().as_bytes().to_vec())
+            }
             PrivateKey::Ed25519(signing_key) => {
                 let signature: ed25519_dalek::Signature = signing_key.sign(data);
                 Ok(signature.to_bytes().to_vec())
@@ -222,6 +232,7 @@ impl SigningCredentials {
             PrivateKey::Rsa(_) => crate::pkcs7::SigningAlgorithm::RsaSha256,
             PrivateKey::EcdsaP256(_) => crate::pkcs7::SigningAlgorithm::EcdsaSha256,
             PrivateKey::EcdsaP384(_) => crate::pkcs7::SigningAlgorithm::EcdsaSha384,
+            PrivateKey::EcdsaP521(_) => crate::pkcs7::SigningAlgorithm::EcdsaSha512,
             PrivateKey::Ed25519(_) => crate::pkcs7::SigningAlgorithm::Ed25519,
             PrivateKey::MlDsa44(_) => crate::pkcs7::SigningAlgorithm::MlDsa44,
             PrivateKey::MlDsa65(_) => crate::pkcs7::SigningAlgorithm::MlDsa65,
@@ -235,6 +246,7 @@ impl SigningCredentials {
             PrivateKey::Rsa(_) => "RSA-SHA256",
             PrivateKey::EcdsaP256(_) => "ECDSA-P256-SHA256",
             PrivateKey::EcdsaP384(_) => "ECDSA-P384-SHA384",
+            PrivateKey::EcdsaP521(_) => "ECDSA-P521-SHA512",
             PrivateKey::Ed25519(_) => "Ed25519",
             PrivateKey::MlDsa44(_) => "ML-DSA-44",
             PrivateKey::MlDsa65(_) => "ML-DSA-65",
@@ -339,6 +351,8 @@ fn parse_private_key(key_der: &[u8]) -> SignResult<PrivateKey> {
         Ok(PrivateKey::EcdsaP256(ec_key))
     } else if let Ok(ec_key) = p384::SecretKey::from_pkcs8_der(key_der) {
         Ok(PrivateKey::EcdsaP384(ec_key))
+    } else if let Ok(ec_key) = p521::SecretKey::from_pkcs8_der(key_der) {
+        Ok(PrivateKey::EcdsaP521(ec_key))
     } else if let Ok(ed_key) = Ed25519SigningKey::from_pkcs8_der(key_der) {
         Ok(PrivateKey::Ed25519(ed_key))
     } else if let Ok(ml44) = MlDsaSigningKey::<MlDsa44>::from_pkcs8_der(key_der) {
@@ -349,7 +363,7 @@ fn parse_private_key(key_der: &[u8]) -> SignResult<PrivateKey> {
         Ok(PrivateKey::MlDsa87(Box::new(ml87)))
     } else {
         Err(SignError::Certificate(
-            "Failed to parse private key: unsupported algorithm (expected RSA, ECDSA P-256/P-384, Ed25519, or ML-DSA)".into(),
+            "Failed to parse private key: unsupported algorithm (expected RSA, ECDSA P-256/P-384/P-521, Ed25519, or ML-DSA)".into(),
         ))
     }
 }
@@ -1934,6 +1948,14 @@ mod tests {
         assert_eq!(creds.algorithm_name(), "ECDSA-P384-SHA384");
     }
 
+    #[test]
+    fn e2e_fixture_algorithm_detection_ecdsa_p521() {
+        let pfx_path = fixture_pfx("ecdsa-p521.pfx");
+        let creds =
+            SigningCredentials::from_pfx(&pfx_path, "test").expect("load ECDSA-P521 fixture");
+        assert_eq!(creds.algorithm_name(), "ECDSA-P521-SHA512");
+    }
+
     // ── PE Signing (fixture-based) ──
 
     #[test]
@@ -2039,6 +2061,28 @@ mod tests {
         assert!(
             result.signature_valid,
             "PE sig should be valid with ECDSA-P384, computed={} signed={}",
+            result.computed_digest, result.signed_digest
+        );
+    }
+
+    #[test]
+    fn e2e_fixture_pe_sign_verify_ecdsa_p521() {
+        let pfx_path = fixture_pfx("ecdsa-p521.pfx");
+        let creds =
+            SigningCredentials::from_pfx(&pfx_path, "test").expect("load ECDSA-P521 fixture");
+
+        let pe_data = build_test_pe();
+        let signed_pe = sign_pe_bytes(&pe_data, &creds).expect("sign PE with ECDSA-P521");
+        assert!(signed_pe.len() > pe_data.len());
+
+        let dir = tempfile::tempdir().expect("create temp dir");
+        let signed_path = dir.path().join("signed.exe");
+        std::fs::write(&signed_path, &signed_pe).expect("write signed PE");
+
+        let result = crate::verifier::verify_file(&signed_path).expect("verify should succeed");
+        assert!(
+            result.signature_valid,
+            "PE sig should be valid with ECDSA-P521, computed={} signed={}",
             result.computed_digest, result.signed_digest
         );
     }
@@ -2190,6 +2234,35 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn e2e_fixture_detached_sign_verify_ecdsa_p521() {
+        let pfx_path = fixture_pfx("ecdsa-p521.pfx");
+        let creds = SigningCredentials::from_pfx_detached(&pfx_path, "test")
+            .expect("load ECDSA-P521 fixture for detached");
+
+        let dir = tempfile::tempdir().expect("create temp dir");
+        let input_path = dir.path().join("testfile.bin");
+        std::fs::write(
+            &input_path,
+            b"Test content for detached signing with ECDSA-P521.",
+        )
+        .expect("write test file");
+
+        let result = sign_detached(&input_path, &creds, None)
+            .await
+            .expect("detached sign should succeed");
+        assert!(!result.p7s_data.is_empty());
+
+        let file_content = std::fs::read(&input_path).expect("read test file");
+        let verify_result = crate::verifier::verify_detached(&file_content, &result.p7s_data)
+            .expect("verify_detached should succeed");
+        assert!(
+            verify_result.signature_valid,
+            "Detached sig should be valid with ECDSA-P521, computed={} signed={}",
+            verify_result.computed_digest, verify_result.signed_digest
+        );
+    }
+
     // ── PowerShell Signing (fixture-based) ──
 
     #[tokio::test]
@@ -2290,6 +2363,31 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn e2e_fixture_powershell_sign_verify_ecdsa_p521() {
+        let pfx_path = fixture_pfx("ecdsa-p521.pfx");
+        let creds =
+            SigningCredentials::from_pfx(&pfx_path, "test").expect("load ECDSA-P521 fixture");
+
+        let dir = tempfile::tempdir().expect("create temp dir");
+        let input_path = dir.path().join("test.ps1");
+        let output_path = dir.path().join("signed.ps1");
+        std::fs::write(&input_path, "Write-Host 'Hello'\r\nGet-Date").expect("write test script");
+
+        let _result = sign_file(&input_path, &output_path, &creds, None)
+            .await
+            .expect("sign PS1 should succeed with ECDSA-P521");
+        assert!(output_path.exists());
+
+        let verify_result =
+            crate::verifier::verify_file(&output_path).expect("verify should succeed");
+        assert!(
+            verify_result.signature_valid,
+            "PS1 sig should be valid with ECDSA-P521, computed={} signed={}",
+            verify_result.computed_digest, verify_result.signed_digest
+        );
+    }
+
     // ── Tamper Detection (fixture-based, cross-algorithm) ──
 
     #[tokio::test]
@@ -2361,6 +2459,30 @@ mod tests {
         assert!(
             !verify_result.signature_valid,
             "Tampered content should fail ECDSA-P384 verification"
+        );
+    }
+
+    #[tokio::test]
+    async fn e2e_fixture_detached_tamper_fails_ecdsa_p521() {
+        let pfx_path = fixture_pfx("ecdsa-p521.pfx");
+        let creds = SigningCredentials::from_pfx_detached(&pfx_path, "test")
+            .expect("load ECDSA-P521 fixture");
+
+        let dir = tempfile::tempdir().expect("create temp dir");
+        let input_path = dir.path().join("testfile.bin");
+        std::fs::write(&input_path, b"Original content for ECDSA-P521 tamper test.")
+            .expect("write test file");
+
+        let result = sign_detached(&input_path, &creds, None)
+            .await
+            .expect("sign should succeed");
+
+        let tampered = b"TAMPERED content that differs from the original.";
+        let verify_result = crate::verifier::verify_detached(tampered, &result.p7s_data)
+            .expect("verify should succeed even with tampered data");
+        assert!(
+            !verify_result.signature_valid,
+            "Tampered content should fail ECDSA-P521 verification"
         );
     }
 
