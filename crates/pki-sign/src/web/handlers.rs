@@ -1,12 +1,13 @@
 //! Route handler functions for the signing web service.
 
 use std::io::{Cursor, Write};
+use std::net::SocketAddr;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Instant;
 
 use axum::body::Bytes;
-use axum::extract::{Path, State};
+use axum::extract::{ConnectInfo, Path, State};
 use axum::http::{header, HeaderMap, StatusCode};
 use axum::response::IntoResponse;
 use axum::Json;
@@ -138,11 +139,13 @@ pub async fn certificate_info(State(state): State<Arc<AppState>>) -> Json<serde_
 /// POST /api/v1/sign — Upload and sign a file.
 pub async fn sign_file(
     State(state): State<Arc<AppState>>,
+    connect_info: Option<ConnectInfo<SocketAddr>>,
     user_info: Option<axum::Extension<UserInfo>>,
     mut multipart: axum_extra::extract::Multipart,
 ) -> Result<impl IntoResponse, AppError> {
     let start = Instant::now();
     let request_id = Uuid::new_v4();
+    let client_ip = connect_info.map(|ci| ci.0.ip().to_string());
 
     // Extract fields from multipart
     let mut file_data: Option<Vec<u8>> = None;
@@ -280,7 +283,7 @@ pub async fn sign_file(
             timestamp: chrono::Utc::now().to_rfc3339(),
             request_id: request_id.to_string(),
             action: "sign".into(),
-            client_ip: None,
+            client_ip: client_ip.clone(),
             filename: Some(filename.clone()),
             file_size: Some(data.len() as u64),
             file_hash: Some(input_hash.clone()),
@@ -337,7 +340,7 @@ pub async fn sign_file(
         timestamp: chrono::Utc::now().to_rfc3339(),
         request_id: request_id.to_string(),
         action: "sign".into(),
-        client_ip: None,
+        client_ip,
         filename: Some(filename.clone()),
         file_size: Some(data.len() as u64),
         file_hash: Some(input_hash),
@@ -386,12 +389,14 @@ pub async fn sign_file(
 /// POST /api/v1/sign-detached — Create a detached CMS/PKCS#7 signature.
 pub async fn sign_detached(
     State(state): State<Arc<AppState>>,
+    connect_info: Option<ConnectInfo<SocketAddr>>,
     headers: HeaderMap,
     user_info: Option<axum::Extension<UserInfo>>,
     mut multipart: axum_extra::extract::Multipart,
 ) -> Result<impl IntoResponse, AppError> {
     let start = Instant::now();
     let request_id = Uuid::new_v4();
+    let client_ip = connect_info.map(|ci| ci.0.ip().to_string());
 
     // Extract file from multipart
     let mut file_data: Option<Vec<u8>> = None;
@@ -506,7 +511,7 @@ pub async fn sign_detached(
         timestamp: chrono::Utc::now().to_rfc3339(),
         request_id: request_id.to_string(),
         action: "sign_detached".into(),
-        client_ip: None,
+        client_ip,
         filename: Some(filename.clone()),
         file_size: Some(data.len() as u64),
         file_hash: Some(input_hash),
@@ -575,10 +580,12 @@ pub async fn sign_detached(
 /// POST /api/v1/verify — Upload and verify a signed file.
 pub async fn verify_file(
     State(state): State<Arc<AppState>>,
+    connect_info: Option<ConnectInfo<SocketAddr>>,
     mut multipart: axum_extra::extract::Multipart,
 ) -> Result<Json<serde_json::Value>, AppError> {
     let start = Instant::now();
     let request_id = Uuid::new_v4();
+    let client_ip = connect_info.map(|ci| ci.0.ip().to_string());
 
     // Extract file from multipart
     let mut file_data: Option<Vec<u8>> = None;
@@ -625,7 +632,7 @@ pub async fn verify_file(
             timestamp: chrono::Utc::now().to_rfc3339(),
             request_id: request_id.to_string(),
             action: "verify".into(),
-            client_ip: None,
+            client_ip: client_ip.clone(),
             filename: Some(filename.clone()),
             file_size: Some(data.len() as u64),
             file_hash: None,
@@ -652,7 +659,7 @@ pub async fn verify_file(
         timestamp: chrono::Utc::now().to_rfc3339(),
         request_id: request_id.to_string(),
         action: "verify".into(),
-        client_ip: None,
+        client_ip,
         filename: Some(filename),
         file_size: Some(data.len() as u64),
         file_hash: None,
@@ -685,10 +692,12 @@ pub async fn verify_file(
 /// POST /api/v1/verify-detached — Verify a detached CMS/PKCS#7 signature.
 pub async fn verify_detached(
     State(state): State<Arc<AppState>>,
+    connect_info: Option<ConnectInfo<SocketAddr>>,
     mut multipart: axum_extra::extract::Multipart,
 ) -> Result<Json<serde_json::Value>, AppError> {
     let start = Instant::now();
     let request_id = Uuid::new_v4();
+    let client_ip = connect_info.map(|ci| ci.0.ip().to_string());
 
     let mut file_data: Option<Vec<u8>> = None;
     let mut sig_data: Option<Vec<u8>> = None;
@@ -734,7 +743,7 @@ pub async fn verify_detached(
             timestamp: chrono::Utc::now().to_rfc3339(),
             request_id: request_id.to_string(),
             action: "verify_detached".into(),
-            client_ip: None,
+            client_ip: client_ip.clone(),
             filename: Some(filename.clone()),
             file_size: Some(data.len() as u64),
             file_hash: None,
@@ -758,7 +767,7 @@ pub async fn verify_detached(
         timestamp: chrono::Utc::now().to_rfc3339(),
         request_id: request_id.to_string(),
         action: "verify_detached".into(),
-        client_ip: None,
+        client_ip,
         filename: Some(filename),
         file_size: Some(data.len() as u64),
         file_hash: None,
@@ -848,11 +857,13 @@ fn classify_file_type(filename: &str) -> (&'static str, bool) {
 /// `signing_summary.csv` with standardized audit columns.
 pub async fn sign_batch(
     State(state): State<Arc<AppState>>,
+    connect_info: Option<ConnectInfo<SocketAddr>>,
     user_info: Option<axum::Extension<UserInfo>>,
     mut multipart: axum_extra::extract::Multipart,
 ) -> Result<impl IntoResponse, AppError> {
     let start = Instant::now();
     let request_id = Uuid::new_v4();
+    let client_ip = connect_info.map(|ci| ci.0.ip().to_string());
 
     // Extract files and cert_type from multipart
     let mut files: Vec<(String, Vec<u8>)> = Vec::new();
@@ -1192,7 +1203,7 @@ pub async fn sign_batch(
             timestamp: r.datetime.clone(),
             request_id: request_id.to_string(),
             action: "sign_batch".into(),
-            client_ip: None,
+            client_ip: client_ip.clone(),
             filename: Some(r.original_filename.clone()),
             file_size: Some(r.size_bytes),
             file_hash: Some(r.original_hash.clone()),
@@ -1278,7 +1289,11 @@ pub async fn admin_audit(State(state): State<Arc<AppState>>) -> Json<serde_json:
 }
 
 /// POST /admin/reload — Reload PFX credentials without restart.
-pub async fn admin_reload(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+pub async fn admin_reload(
+    State(state): State<Arc<AppState>>,
+    connect_info: Option<ConnectInfo<SocketAddr>>,
+) -> impl IntoResponse {
+    let client_ip = connect_info.map(|ci| ci.0.ip().to_string());
     let mut new_credentials = Vec::new();
 
     for cert_config in &state.config.cert_configs {
@@ -1322,7 +1337,7 @@ pub async fn admin_reload(State(state): State<Arc<AppState>>) -> impl IntoRespon
         timestamp: chrono::Utc::now().to_rfc3339(),
         request_id: Uuid::new_v4().to_string(),
         action: "admin_reload".into(),
-        client_ip: None,
+        client_ip,
         filename: None,
         file_size: None,
         file_hash: None,
@@ -1421,8 +1436,10 @@ pub async fn admin_cert_info(
 /// POST /admin/certs/:name/default — Set a certificate as the default.
 pub async fn admin_set_default_cert(
     State(state): State<Arc<AppState>>,
+    connect_info: Option<ConnectInfo<SocketAddr>>,
     Path(name): Path<String>,
 ) -> Result<Json<serde_json::Value>, AppError> {
+    let client_ip = connect_info.map(|ci| ci.0.ip().to_string());
     let credentials = state.credentials.read().await;
     let idx = credentials.iter().position(|(n, _)| n == &name);
 
@@ -1436,7 +1453,7 @@ pub async fn admin_set_default_cert(
                 timestamp: chrono::Utc::now().to_rfc3339(),
                 request_id: Uuid::new_v4().to_string(),
                 action: "admin_set_default_cert".into(),
-                client_ip: None,
+                client_ip,
                 filename: None,
                 file_size: None,
                 file_hash: None,

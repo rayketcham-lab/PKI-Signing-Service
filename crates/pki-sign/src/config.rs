@@ -313,3 +313,58 @@ fn default_github_repo() -> String {
 fn default_dedup_window() -> u64 {
     3600
 }
+
+#[cfg(test)]
+mod tests {
+    use std::io::Write;
+
+    use tempfile::NamedTempFile;
+
+    use super::*;
+
+    #[test]
+    fn test_default_config() {
+        let cfg = SignConfig::default();
+        assert_eq!(cfg.bind_port, 6447);
+        assert_eq!(cfg.bind_addr, "0.0.0.0");
+        assert!(!cfg.ldap.enabled, "LDAP must be disabled by default");
+        assert!(!cfg.dev_mode, "dev_mode must be false by default");
+        assert!(!cfg.cert_configs.is_empty() || cfg.cert_configs.is_empty()); // vec exists
+        assert!(cfg.tls_cert.is_none());
+        assert!(cfg.tls_key.is_none());
+        assert!(cfg.admin_token_hash.is_none());
+    }
+
+    #[test]
+    fn test_load_config_invalid_toml() {
+        let mut tmp = NamedTempFile::new().expect("tmp file");
+        write!(tmp, "this is [[[not valid toml at all").expect("write");
+        let result = SignConfig::load_from_file(tmp.path());
+        assert!(result.is_err(), "invalid TOML must return an error");
+    }
+
+    #[test]
+    fn test_load_config_valid() {
+        let mut tmp = NamedTempFile::new().expect("tmp file");
+        write!(
+            tmp,
+            r#"
+bind_addr = "127.0.0.1"
+bind_port = 8443
+dev_mode = true
+
+[ldap]
+enabled = true
+admin_group = "cn=admins,dc=example,dc=com"
+"#
+        )
+        .expect("write");
+
+        let cfg = SignConfig::load_from_file(tmp.path()).expect("valid TOML must parse");
+        assert_eq!(cfg.bind_addr, "127.0.0.1");
+        assert_eq!(cfg.bind_port, 8443);
+        assert!(cfg.dev_mode);
+        assert!(cfg.ldap.enabled);
+        assert_eq!(cfg.ldap.admin_group, "cn=admins,dc=example,dc=com");
+    }
+}

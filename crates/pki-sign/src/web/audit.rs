@@ -126,3 +126,79 @@ impl AuditLogger {
         entries.into_iter().skip(skip).collect()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use tempfile::NamedTempFile;
+
+    use super::*;
+
+    fn make_entry(action: &str) -> AuditEntry {
+        AuditEntry {
+            timestamp: "2026-03-20T00:00:00Z".to_string(),
+            request_id: "test-req-id".to_string(),
+            action: action.to_string(),
+            client_ip: Some("127.0.0.1".to_string()),
+            filename: Some("test.exe".to_string()),
+            file_size: Some(1024),
+            file_hash: Some("deadbeef".to_string()),
+            signed_hash: None,
+            signer_subject: None,
+            timestamped: Some(false),
+            duration_ms: 42,
+            status: "success".to_string(),
+            error_message: None,
+            cert_type: None,
+            signed_filename: None,
+            file_type: None,
+        }
+    }
+
+    #[test]
+    fn test_audit_log_writes_json_line() {
+        let tmp = NamedTempFile::new().expect("tmp file");
+        let logger = AuditLogger::new(tmp.path()).expect("logger");
+        logger.log(&make_entry("sign"));
+
+        let contents = std::fs::read_to_string(tmp.path()).expect("read");
+        assert!(
+            !contents.is_empty(),
+            "log file must not be empty after write"
+        );
+
+        // Every non-empty line must be valid JSON containing the expected action.
+        for line in contents.lines().filter(|l| !l.is_empty()) {
+            let parsed: serde_json::Value =
+                serde_json::from_str(line).expect("each line must be valid JSON");
+            assert_eq!(
+                parsed["action"].as_str(),
+                Some("sign"),
+                "action field must match"
+            );
+        }
+    }
+
+    #[test]
+    fn test_audit_tail_returns_entries() {
+        let tmp = NamedTempFile::new().expect("tmp file");
+        let logger = AuditLogger::new(tmp.path()).expect("logger");
+
+        logger.log(&make_entry("sign"));
+        logger.log(&make_entry("verify"));
+        logger.log(&make_entry("admin_reload"));
+
+        let tail = logger.tail(2);
+        assert_eq!(tail.len(), 2, "tail(2) must return exactly 2 entries");
+        assert_eq!(tail[0].action, "verify");
+        assert_eq!(tail[1].action, "admin_reload");
+    }
+
+    #[test]
+    fn test_audit_tail_empty_file() {
+        let tmp = NamedTempFile::new().expect("tmp file");
+        let logger = AuditLogger::new(tmp.path()).expect("logger");
+
+        let tail = logger.tail(10);
+        assert!(tail.is_empty(), "tail on empty file must return empty vec");
+    }
+}
