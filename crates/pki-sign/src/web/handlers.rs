@@ -1780,4 +1780,240 @@ mod tests {
         let config = config_with_cert_groups();
         assert!(check_cert_authorization(None, "server", &config).is_err());
     }
+
+    // ── Web UI connectivity tests ──
+    // These tests prove all frontend components are connected to the backend.
+
+    #[tokio::test]
+    async fn test_root_redirects_to_index() {
+        let state = make_test_state(vec![]);
+        let resp = get(state, "/").await;
+        assert_eq!(
+            resp.status(),
+            axum::http::StatusCode::PERMANENT_REDIRECT,
+            "Root must redirect to /static/index.html"
+        );
+        let location = resp
+            .headers()
+            .get("location")
+            .expect("redirect must have location");
+        assert_eq!(
+            location.to_str().unwrap(),
+            "/static/index.html",
+            "Root must redirect to /static/index.html"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_security_headers_present() {
+        let state = make_test_state(vec![]);
+        let resp = get(state, "/api/v1/health").await;
+        assert_eq!(resp.status(), axum::http::StatusCode::OK);
+
+        let headers = resp.headers();
+
+        // HSTS
+        assert!(
+            headers.contains_key("strict-transport-security"),
+            "HSTS header must be present"
+        );
+
+        // X-Frame-Options
+        assert_eq!(
+            headers.get("x-frame-options").unwrap().to_str().unwrap(),
+            "DENY",
+            "X-Frame-Options must be DENY"
+        );
+
+        // X-Content-Type-Options
+        assert_eq!(
+            headers
+                .get("x-content-type-options")
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            "nosniff",
+            "X-Content-Type-Options must be nosniff"
+        );
+
+        // CSP must be present and must NOT contain unsafe-inline
+        let csp = headers
+            .get("content-security-policy")
+            .expect("CSP header must be present")
+            .to_str()
+            .unwrap();
+        assert!(
+            !csp.contains("unsafe-inline"),
+            "CSP must not contain 'unsafe-inline'"
+        );
+        assert!(
+            csp.contains("default-src 'self'"),
+            "CSP must have default-src 'self'"
+        );
+
+        // Referrer-Policy
+        assert!(
+            headers.contains_key("referrer-policy"),
+            "Referrer-Policy header must be present"
+        );
+
+        // Server header must be removed
+        assert!(
+            !headers.contains_key("server"),
+            "Server header must be removed"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_admin_stats_returns_json() {
+        use http_body_util::BodyExt as _;
+
+        // Admin stats should work in dev_mode (debug build)
+        let mut state = make_test_state(vec![]);
+        Arc::get_mut(&mut state).unwrap().config.dev_mode = true;
+        let resp = get(state, "/admin/stats").await;
+        assert_eq!(resp.status(), axum::http::StatusCode::OK);
+
+        let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+        let json: serde_json::Value = serde_json::from_slice(&bytes).expect("stats body is JSON");
+        assert!(
+            json["uptime_seconds"].is_number(),
+            "stats must include uptime_seconds"
+        );
+        assert!(
+            json["files_signed"].is_number(),
+            "stats must include files_signed"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_admin_audit_returns_json() {
+        use http_body_util::BodyExt as _;
+
+        let mut state = make_test_state(vec![]);
+        Arc::get_mut(&mut state).unwrap().config.dev_mode = true;
+        let resp = get(state, "/admin/audit").await;
+        assert_eq!(resp.status(), axum::http::StatusCode::OK);
+
+        let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+        let json: serde_json::Value = serde_json::from_slice(&bytes).expect("audit body is JSON");
+        assert!(json["entries"].is_array(), "audit must have entries array");
+    }
+
+    #[tokio::test]
+    async fn test_admin_certs_returns_json() {
+        use http_body_util::BodyExt as _;
+
+        let cred = load_test_credential();
+        let mut state = make_test_state(vec![cred]);
+        Arc::get_mut(&mut state).unwrap().config.dev_mode = true;
+        let resp = get(state, "/admin/certs").await;
+        assert_eq!(resp.status(), axum::http::StatusCode::OK);
+
+        let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+        let json: serde_json::Value = serde_json::from_slice(&bytes).expect("certs body is JSON");
+        let certs = json["certificates"].as_array().expect("certificates array");
+        assert_eq!(certs.len(), 1, "must list the loaded test certificate");
+    }
+
+    #[tokio::test]
+    async fn test_admin_no_auth_denied() {
+        // Without dev_mode and without auth tokens, admin endpoints must be denied.
+        // We must explicitly create a state with dev_mode=false since
+        // make_test_state sets dev_mode=true for LDAP bypass in tests.
+        let tmp = tempfile::NamedTempFile::new().expect("tempfile");
+        let audit_path = tmp.path().to_path_buf();
+        std::mem::forget(tmp);
+
+        let config = SignConfig {
+            dev_mode: false, // Production mode — no dev bypass
+            require_timestamp: false,
+            audit_log: audit_path.clone(),
+            ..SignConfig::default()
+        };
+        let state = Arc::new(crate::web::AppState {
+            config,
+            credentials: tokio::sync::RwLock::new(vec![]),
+            default_credential: tokio::sync::RwLock::new(0),
+            audit: crate::web::audit::AuditLogger::new(&audit_path).expect("audit logger"),
+            started_at: std::time::Instant::now(),
+            stats: crate::web::SigningStats::default(),
+            gh_reporter: None,
+        });
+
+        let resp = get(state, "/admin/stats").await;
+        // Returns 404 (not 401/403) to prevent endpoint enumeration
+        assert_eq!(
+            resp.status(),
+            axum::http::StatusCode::NOT_FOUND,
+            "Admin without auth must return 404"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_verify_detached_no_file_returns_400() {
+        let state = make_test_state(vec![]);
+        let resp = post_raw(
+            state,
+            "/api/v1/verify-detached",
+            "application/json",
+            b"{}".to_vec(),
+        )
+        .await;
+        assert_eq!(resp.status(), axum::http::StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn test_sign_batch_no_file_returns_400() {
+        let state = make_test_state(vec![]);
+        let resp = post_raw(
+            state,
+            "/api/v1/sign-batch",
+            "application/json",
+            b"{}".to_vec(),
+        )
+        .await;
+        assert_eq!(resp.status(), axum::http::StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn test_sign_detached_no_file_returns_400() {
+        let state = make_test_state(vec![]);
+        let resp = post_raw(
+            state,
+            "/api/v1/sign-detached",
+            "application/json",
+            b"{}".to_vec(),
+        )
+        .await;
+        assert_eq!(resp.status(), axum::http::StatusCode::BAD_REQUEST);
+    }
+
+    #[test]
+    fn test_classify_file_type_pe() {
+        assert_eq!(classify_file_type("test.exe"), ("Authenticode", false));
+        assert_eq!(classify_file_type("test.dll"), ("Authenticode", false));
+        assert_eq!(classify_file_type("test.sys"), ("Authenticode", false));
+    }
+
+    #[test]
+    fn test_classify_file_type_powershell() {
+        assert_eq!(classify_file_type("script.ps1"), ("PowerShell", false));
+    }
+
+    #[test]
+    fn test_classify_file_type_msi_cab() {
+        assert_eq!(classify_file_type("setup.msi"), ("MSI Authenticode", false));
+        assert_eq!(
+            classify_file_type("archive.cab"),
+            ("CAB Authenticode", false)
+        );
+    }
+
+    #[test]
+    fn test_classify_file_type_unknown_is_detached() {
+        assert_eq!(classify_file_type("data.bin"), ("Detached CMS", true));
+        assert_eq!(classify_file_type("readme.txt"), ("Detached CMS", true));
+        assert_eq!(classify_file_type("noext"), ("Detached CMS", true));
+    }
 }

@@ -7,6 +7,9 @@ on:
     branches: [main]
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
@@ -86,3 +89,66 @@ jobs:
         if: matrix.os == 'Linux'
         run: |
           grep -n 'pfx_path.display()' crates/pki-sign/src/signer.rs && exit 1 || echo "OK"
+      - name: Verify CSP has no unsafe-inline (#53)
+        if: matrix.os == 'Linux'
+        run: |
+          if grep 'CSP_HEADER_VALUE.*unsafe-inline' crates/pki-sign/src/web/middleware.rs; then
+            echo "FAIL: CSP_HEADER_VALUE contains 'unsafe-inline'"
+            exit 1
+          fi
+          echo "OK: CSP does not contain 'unsafe-inline'"
+      - name: Verify no inline styles in static HTML (#53)
+        if: matrix.os == 'Linux'
+        run: |
+          INLINE_COUNT=$(grep -c 'style="' crates/pki-sign/static/*.html || true)
+          if [ "$INLINE_COUNT" -gt 0 ]; then
+            echo "FAIL: Found $INLINE_COUNT inline style attributes in static HTML"
+            grep -n 'style="' crates/pki-sign/static/*.html
+            exit 1
+          fi
+          echo "OK: No inline styles in static HTML"
+      - name: Verify subtle crate used for constant-time comparison (#60)
+        if: matrix.os == 'Linux'
+        run: |
+          if ! grep -q 'subtle' crates/pki-sign/src/web/middleware.rs; then
+            echo "FAIL: middleware.rs must use subtle crate for constant-time comparison"
+            exit 1
+          fi
+          echo "OK: subtle crate in use"
+      - name: Verify all workflows have explicit permissions (#50)
+        if: matrix.os == 'Linux'
+        run: |
+          FAIL=0
+          for wf in .github/workflows/*.yml; do
+            if ! grep -q 'permissions:' "$wf"; then
+              echo "FAIL: $wf missing permissions: declaration"
+              FAIL=1
+            fi
+          done
+          if [ "$FAIL" -eq 1 ]; then exit 1; fi
+          echo "OK: All workflows have permissions declarations"
+      - name: Verify rust-toolchain.toml exists (#52)
+        if: matrix.os == 'Linux'
+        run: |
+          if [ ! -f rust-toolchain.toml ]; then
+            echo "FAIL: rust-toolchain.toml not found"
+            exit 1
+          fi
+          echo "OK: rust-toolchain.toml exists"
+          cat rust-toolchain.toml
+      - name: Verify release workflow has CI gate (#51)
+        if: matrix.os == 'Linux'
+        run: |
+          if ! grep -q 'ci-gate' .github/workflows/release.yml; then
+            echo "FAIL: release.yml must have a ci-gate job"
+            exit 1
+          fi
+          echo "OK: release.yml has CI gate"
+      - name: Verify oaep_decrypt not reachable from web handlers (#48)
+        if: matrix.os == 'Linux'
+        run: |
+          if grep -q 'oaep_decrypt\|enveloped' crates/pki-sign/src/web/handlers.rs; then
+            echo "FAIL: web handlers must not reference oaep_decrypt or enveloped"
+            exit 1
+          fi
+          echo "OK: oaep_decrypt not web-reachable"

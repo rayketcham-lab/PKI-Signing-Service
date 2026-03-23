@@ -814,3 +814,7 @@ a:hover { color: #CE1126; }
 
 /* --- Misc --- */
 .table-wrap { overflow-x: auto; }
+
+/* --- Page subtitle / hint text (replaces inline styles for CSP compliance) --- */
+.page-subtitle { color: #63666A; margin-bottom: 16px; }
+.table-hint { font-size: 0.8rem; color: #63666A; margin-bottom: 0.75rem; }

@@ -92,6 +92,13 @@ pub struct SignConfig {
     /// and admin functions are disabled for non-admin users.
     #[serde(default)]
     pub dev_mode: bool,
+
+    /// When true, signing operations fail if the audit log cannot be written.
+    ///
+    /// Prevents producing signed artifacts without an audit trail.
+    /// Defaults to false for backward compatibility.
+    #[serde(default)]
+    pub audit_required: bool,
 }
 
 /// Signing certificate configuration.
@@ -222,6 +229,35 @@ impl SignConfig {
             ))
         })
     }
+
+    /// Validate configuration for security-critical invariants.
+    ///
+    /// Returns an error if the configuration is unsafe for production use.
+    pub fn validate(&self) -> SignResult<()> {
+        // #49: LDAP enabled without trusted_proxies is a fail-open auth bypass
+        if self.ldap.enabled && self.ldap.trusted_proxies.is_empty() {
+            return Err(SignError::Config(
+                "LDAP is enabled but trusted_proxies is empty. \
+                 This allows LDAP header injection from any IP. \
+                 Configure trusted_proxies with your reverse proxy IPs, \
+                 or set ldap.enabled = false."
+                    .into(),
+            ));
+        }
+        // #63: CIDR notation not yet supported — reject entries containing '/'
+        // to prevent silent matching failures (is_trusted_proxy does exact match)
+        for proxy in &self.ldap.trusted_proxies {
+            if proxy.contains('/') {
+                return Err(SignError::Config(format!(
+                    "trusted_proxies entry '{}' contains CIDR notation, \
+                     which is not yet supported. Use individual IP addresses. \
+                     See issue #63 for CIDR support status.",
+                    proxy
+                )));
+            }
+        }
+        Ok(())
+    }
 }
 
 impl Default for SignConfig {
@@ -243,6 +279,7 @@ impl Default for SignConfig {
             ldap: LdapConfig::default(),
             github: GitHubConfig::default(),
             dev_mode: false,
+            audit_required: false,
         }
     }
 }
@@ -366,5 +403,109 @@ admin_group = "cn=admins,dc=example,dc=com"
         assert!(cfg.dev_mode);
         assert!(cfg.ldap.enabled);
         assert_eq!(cfg.ldap.admin_group, "cn=admins,dc=example,dc=com");
+    }
+
+    // ── Issue #61: audit_required config field ──
+
+    #[test]
+    fn test_config_audit_required_defaults_false() {
+        let cfg = SignConfig::default();
+        assert!(
+            !cfg.audit_required,
+            "audit_required must default to false for backward compatibility (issue #61)"
+        );
+    }
+
+    #[test]
+    fn test_config_audit_required_parses() {
+        let mut tmp = NamedTempFile::new().expect("tmp file");
+        writeln!(tmp, "audit_required = true").expect("write");
+        let cfg = SignConfig::load_from_file(tmp.path()).expect("valid TOML must parse");
+        assert!(
+            cfg.audit_required,
+            "audit_required = true must be respected (issue #61)"
+        );
+    }
+
+    // ── Issue #63: CIDR notation for trusted_proxies ──
+
+    #[test]
+    fn test_config_cidr_trusted_proxies_rejected_by_validate() {
+        // CIDR notation is not yet supported (#63). Config validation must
+        // reject CIDR entries to prevent silent matching failures.
+        let mut cfg = SignConfig::default();
+        cfg.ldap.enabled = true;
+        cfg.ldap.trusted_proxies = vec!["10.0.0.0/24".into(), "192.168.1.5".into()];
+        let result = cfg.validate();
+        assert!(
+            result.is_err(),
+            "CIDR entries must be rejected until #63 is implemented"
+        );
+        let err_msg = format!("{}", result.unwrap_err());
+        assert!(
+            err_msg.contains("CIDR"),
+            "Error must mention CIDR: {err_msg}"
+        );
+    }
+
+    #[test]
+    fn test_config_exact_ip_trusted_proxies_accepted() {
+        let mut cfg = SignConfig::default();
+        cfg.ldap.enabled = true;
+        cfg.ldap.trusted_proxies = vec!["10.0.0.1".into(), "192.168.1.5".into()];
+        let result = cfg.validate();
+        assert!(
+            result.is_ok(),
+            "Exact IP addresses must be accepted by validate()"
+        );
+    }
+
+    // ── Issue #49: validate LDAP + trusted_proxies ──
+
+    #[test]
+    fn test_config_validate_ldap_requires_trusted_proxies() {
+        let mut cfg = SignConfig::default();
+        cfg.ldap.enabled = true;
+        cfg.ldap.trusted_proxies = vec![]; // Empty!
+        let result = cfg.validate();
+        assert!(
+            result.is_err(),
+            "LDAP enabled + empty trusted_proxies must fail validation (issue #49)"
+        );
+    }
+
+    #[test]
+    fn test_config_validate_ldap_with_proxies_ok() {
+        let mut cfg = SignConfig::default();
+        cfg.ldap.enabled = true;
+        cfg.ldap.trusted_proxies = vec!["10.0.0.1".into()];
+        let result = cfg.validate();
+        assert!(
+            result.is_ok(),
+            "LDAP with trusted proxies should validate OK"
+        );
+    }
+
+    #[test]
+    fn test_config_validate_ldap_disabled_no_proxies_ok() {
+        let cfg = SignConfig::default(); // ldap.enabled = false
+        let result = cfg.validate();
+        assert!(
+            result.is_ok(),
+            "LDAP disabled should not require trusted_proxies"
+        );
+    }
+
+    // ── Issue #57: config.example.toml must parse ──
+
+    #[test]
+    fn test_config_example_toml_parses() {
+        let example = include_str!("../../../config.example.toml");
+        let cfg: Result<SignConfig, _> = toml::from_str(example);
+        assert!(
+            cfg.is_ok(),
+            "config.example.toml must parse as valid SignConfig: {:?}",
+            cfg.err()
+        );
     }
 }

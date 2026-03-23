@@ -5,6 +5,8 @@ on:
     branches: [main]
   workflow_dispatch:
 
+permissions: {}
+
 jobs:
   trigger-downstream:
     name: Trigger downstream tests

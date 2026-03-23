@@ -654,7 +654,11 @@ impl Pkcs7Builder {
             // OpenSSL's PKCS7_signatureVerify decodes the ASN.1 SEQUENCE and
             // re-encodes only its inner content (without the outer SEQUENCE
             // tag + length) before hashing. We must hash the same bytes.
-            let spc_der = spc_indirect_data.as_ref().unwrap();
+            let spc_der = spc_indirect_data.as_ref().ok_or_else(|| {
+                SignError::Internal(
+                    "Authenticode mode requires SpcIndirectDataContent but none was set".into(),
+                )
+            })?;
             let spc_content = &spc_der[1 + der_length_size(spc_der)..];
             let spc_hash = digest_alg.digest(spc_content);
             build_signed_attrs_content(
@@ -698,7 +702,11 @@ impl Pkcs7Builder {
             build_detached_signed_data(&certificates, &signer_info, digest_alg)
         } else {
             build_signed_data(
-                spc_indirect_data.as_ref().unwrap(),
+                spc_indirect_data.as_ref().ok_or_else(|| {
+                    SignError::Internal(
+                        "Authenticode mode requires SpcIndirectDataContent but none was set".into(),
+                    )
+                })?,
                 &certificates,
                 &signer_info,
                 digest_alg,

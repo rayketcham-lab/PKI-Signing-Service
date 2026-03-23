@@ -128,7 +128,11 @@ function initTosScroll() {
 
     tosCheckbox.addEventListener("change", function () {
         if (signForm) {
-            signForm.style.display = tosCheckbox.checked ? "block" : "none";
+            if (tosCheckbox.checked) {
+                signForm.classList.remove("hidden");
+            } else {
+                signForm.classList.add("hidden");
+            }
         }
     });
 }

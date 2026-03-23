@@ -8,8 +8,10 @@
 [advisories]
 # Ignore specific advisories (with justification)
 ignore = [
-    # RSA timing sidechannel - mitigated by not using RSA decryption in production signing paths
-    { id = "RUSTSEC-2023-0071", reason = "rsa Marvin attack: pki-sign only uses RSA signing, not decryption in critical paths" },
+    # RSA timing sidechannel — oaep_decrypt exists in crypto/rsa_oaep.rs for CMS EnvelopedData
+    # key transport, but is NOT reachable from any web handler (verified by security regression
+    # test test_security_regression_oaep_decrypt_not_web_reachable). No upstream fix available.
+    { id = "RUSTSEC-2023-0071", reason = "rsa Marvin attack: oaep_decrypt exists for CMS EnvelopedData but is not network-reachable (verified by test)" },
     # ML-DSA timing sidechannel in Decompose - ml-dsa 0.0.4, awaiting upstream fix
     { id = "RUSTSEC-2025-0144", reason = "ml-dsa timing side-channel: experimental PQ support, not used in production signing yet" },
     # rustls-pemfile unmaintained — transitive dep via rustls/reqwest, migrating to rustls-pem

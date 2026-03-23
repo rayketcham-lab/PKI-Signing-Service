@@ -7,6 +7,9 @@ on:
     branches: [main]
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
@@ -269,7 +272,7 @@ jobs:
           rustup default stable
           rustup update stable
       - name: Install cargo-audit
-        run: which cargo-audit || cargo install cargo-audit --locked
+        run: which cargo-audit || cargo install cargo-audit@0.22.1 --locked
       - name: Run audit
         env:
           GITHUB_TOKEN: ""
@@ -296,7 +299,7 @@ jobs:
           rustup default stable
           rustup update stable
       - name: Install cargo-deny
-        run: which cargo-deny || cargo install cargo-deny --locked
+        run: which cargo-deny || cargo install cargo-deny@0.19.0 --locked
       - name: Run cargo-deny
         env:
           GITHUB_TOKEN: ""

@@ -1,0 +1,113 @@
+# PKI Signing Service — Example Configuration
+# Copy to /etc/pki/sign.toml or pass via --config flag
+# All values shown are defaults unless noted otherwise
+
+# ── Server ──────────────────────────────────────────────────────────
+
+# Bind address (default: 0.0.0.0)
+# Use 127.0.0.1 to restrict to localhost
+bind_addr = "0.0.0.0"
+
+# Bind port (default: 6447)
+bind_port = 6447
+
+# TLS certificate and key (PEM format)
+# Required for HTTPS — omit for plaintext HTTP (dev only)
+# tls_cert = "/etc/pki/tls/server.pem"
+# tls_key = "/etc/pki/tls/server-key.pem"
+
+# ── Signing Certificates ────────────────────────────────────────────
+
+# Each [[cert_configs]] entry defines a PFX signing certificate.
+# The PFX password is read from the named environment variable.
+
+# [[cert_configs]]
+# name = "desktop"
+# pfx_path = "/etc/pki/certs/desktop.pfx"
+# pfx_password_env = "PFX_PASSWORD_DESKTOP"
+
+# [[cert_configs]]
+# name = "server"
+# pfx_path = "/etc/pki/certs/server.pfx"
+# pfx_password_env = "PFX_PASSWORD_SERVER"
+
+# ── Timestamping (TSA) ──────────────────────────────────────────────
+
+[tsa]
+# TSA URLs (tried in order, with failover)
+urls = ["https://timestamp.digicert.com", "https://timestamp.sectigo.com"]
+
+# TSA request timeout in seconds (default: 30)
+timeout_secs = 30
+
+# ── File Handling ────────────────────────────────────────────────────
+
+# Maximum upload size in bytes (default: 500 MB)
+max_upload_size = 524288000
+
+# Allowed file extensions
+allowed_extensions = ["exe", "dll", "sys", "ocx", "scr", "cpl", "drv", "msi", "cab", "ps1"]
+
+# Directory for signed output files
+output_dir = "/var/lib/pki-sign/signed"
+
+# ── Audit ────────────────────────────────────────────────────────────
+
+# Audit log file path (JSON-lines format)
+audit_log = "/var/log/pki-sign/audit.log"
+
+# When true, signing fails if audit log write fails (fail-closed)
+# Default: false (signing proceeds even if audit logging fails)
+audit_required = false
+
+# ── Authentication ───────────────────────────────────────────────────
+
+# Authentication mode: "none", "mtls", "header", "apikey"
+auth_mode = "none"
+
+# Whether to require timestamping (default: true)
+require_timestamp = true
+
+# SHA-256 hash of admin bearer token (hex-encoded)
+# Generate with: echo -n "your-token" | sha256sum
+# admin_token_hash = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+
+# Development mode — NEVER enable in production
+# Only effective in debug builds; ignored in release builds
+dev_mode = false
+
+# ── LDAP Header Auth ────────────────────────────────────────────────
+
+[ldap]
+# Enable LDAP header pass-through authentication
+enabled = false
+
+# SECURITY: When LDAP is enabled, trusted_proxies MUST be configured.
+# Empty trusted_proxies with LDAP enabled will reject ALL requests (fail-closed).
+# trusted_proxies = ["10.0.0.1", "10.0.0.2"]
+
+# Header names (typically set by reverse proxy)
+user_header = "X-Remote-User"
+groups_header = "X-Remote-Groups"
+email_header = "X-Remote-Email"
+display_name_header = "X-Remote-Display-Name"
+
+# Group that grants admin access
+# admin_group = "cn=admins,dc=example,dc=com"
+
+# Mapping of certificate name to required LDAP group
+# [ldap.cert_groups]
+# desktop = "cn=desktop-signers,dc=example,dc=com"
+# server = "cn=server-signers,dc=example,dc=com"
+
+# Delimiter for multiple groups in the groups header
+groups_delimiter = ";"
+
+# ── GitHub Issue Reporter ────────────────────────────────────────────
+
+[github]
+# Enable automatic GitHub issue creation on signing errors
+enabled = false
+# repo = "your-org/your-repo"
+# auto_issue_on_error = false
+# dedup_window_secs = 3600

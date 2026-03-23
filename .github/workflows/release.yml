@@ -17,8 +17,28 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # Gate: run CI checks before building release artifacts
+  ci-gate:
+    name: CI Gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4.3.1
+      - name: Setup Rust
+        run: |
+          rustup default stable
+          rustup update stable
+          rustup component add clippy rustfmt
+      - name: Format check
+        run: cargo fmt --all --check
+      - name: Clippy
+        run: cargo clippy --all-targets --workspace -- -D warnings
+      - name: Test
+        run: cargo test --workspace
+
   build-linux:
     name: Build Linux (glibc + musl)
+    needs: [ci-gate]
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -68,6 +88,7 @@ jobs:
 
   build-windows:
     name: Build Windows
+    needs: [ci-gate]
     runs-on: windows-latest
     timeout-minutes: 20
     steps:

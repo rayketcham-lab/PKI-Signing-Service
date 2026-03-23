@@ -74,6 +74,7 @@ aes-kw = "0.2"
 p12 = "0.6"
 p12-keystore = { workspace = true }
 zeroize = { workspace = true }
+subtle = "2"
 
 # HTTP client (for TSA requests)
 reqwest = { workspace = true }

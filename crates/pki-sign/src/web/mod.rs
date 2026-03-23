@@ -277,8 +277,8 @@ pub async fn run_server(config: SignConfig) -> Result<(), Box<dyn std::error::Er
         .map_err(|e| SignError::Config(format!("Invalid bind address '{}': {}", bind_addr, e)))?;
 
     if use_tls {
-        let cert_path = tls_cert_path.unwrap();
-        let key_path = tls_key_path.unwrap();
+        let cert_path = tls_cert_path.expect("tls_cert_path checked by use_tls guard");
+        let key_path = tls_key_path.expect("tls_key_path checked by use_tls guard");
         info!(%socket_addr, tls = true, "Starting HTTPS server");
         let tls_config =
             axum_server::tls_rustls::RustlsConfig::from_pem_file(&cert_path, &key_path).await?;

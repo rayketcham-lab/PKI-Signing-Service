@@ -5,6 +5,9 @@ on:
     - cron: '0 6 * * *'  # 06:00 UTC daily
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
@@ -100,8 +103,8 @@ jobs:
 
       - name: Install audit tools
         run: |
-          which cargo-audit || cargo install cargo-audit --locked
-          which cargo-deny || cargo install cargo-deny --locked
+          which cargo-audit || cargo install cargo-audit@0.22.1 --locked
+          which cargo-deny || cargo install cargo-deny@0.19.0 --locked
 
       - name: Run cargo audit (no ignores)
         env:

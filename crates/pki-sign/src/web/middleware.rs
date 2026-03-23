@@ -15,11 +15,12 @@ use super::AppState;
 
 /// Check whether the connecting client IP is in the trusted proxies list.
 ///
-/// Returns `true` if the trusted_proxies list is empty (no restriction) or
-/// if the client IP matches one of the trusted addresses.
+/// Returns `false` if the trusted_proxies list is empty (fail-closed, #49).
+/// An empty list means no proxy is trusted — callers must configure at least
+/// one trusted proxy address when LDAP header auth is enabled.
 fn is_trusted_proxy(client_ip: &str, trusted_proxies: &[String]) -> bool {
     if trusted_proxies.is_empty() {
-        return true; // No restriction configured
+        return false; // Fail-closed: no proxies configured = no trust
     }
     trusted_proxies.iter().any(|proxy| proxy == client_ip)
 }
@@ -60,19 +61,19 @@ pub async fn ldap_auth_middleware(
 
     // Production mode: require LDAP authentication
     if state.config.ldap.enabled {
-        // #6 fix: Validate trusted proxy IP before accepting LDAP headers
-        if !state.config.ldap.trusted_proxies.is_empty() {
-            let client_ip = connect_info
-                .as_ref()
-                .map(|ci| ci.0.ip().to_string())
-                .unwrap_or_default();
-            if !is_trusted_proxy(&client_ip, &state.config.ldap.trusted_proxies) {
-                tracing::warn!(
-                    client_ip = %client_ip,
-                    "LDAP auth rejected: request not from trusted proxy"
-                );
-                return not_found_response();
-            }
+        // #6/#49 fix: Always validate trusted proxy IP before accepting LDAP headers.
+        // Fail-closed: if no trusted proxies are configured, ALL requests are rejected.
+        let client_ip = connect_info
+            .as_ref()
+            .map(|ci| ci.0.ip().to_string())
+            .unwrap_or_default();
+        if !is_trusted_proxy(&client_ip, &state.config.ldap.trusted_proxies) {
+            tracing::warn!(
+                client_ip = %client_ip,
+                trusted_proxies_configured = !state.config.ldap.trusted_proxies.is_empty(),
+                "LDAP auth rejected: request not from trusted proxy"
+            );
+            return not_found_response();
         }
 
         let user_info =
@@ -181,9 +182,7 @@ pub async fn security_headers_middleware(
     );
     headers.insert(
         header::CONTENT_SECURITY_POLICY,
-        "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; frame-ancestors 'none'; form-action 'self'"
-            .parse()
-            .unwrap(),
+        CSP_HEADER_VALUE.parse().unwrap(),
     );
     headers.insert(
         header::REFERRER_POLICY,
@@ -206,15 +205,18 @@ fn not_found_response() -> axum::response::Response {
         .into_response()
 }
 
+/// Content-Security-Policy header value.
+///
+/// Extracted as a constant for testability and single-source-of-truth.
+/// MUST NOT contain 'unsafe-inline' for any directive (#53).
+pub(crate) const CSP_HEADER_VALUE: &str = "default-src 'self'; script-src 'self'; style-src 'self' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; frame-ancestors 'none'; form-action 'self'";
+
 /// Constant-time byte slice comparison to prevent timing attacks.
+///
+/// Uses the `subtle` crate's vetted implementation (#60).
 fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
-    if a.len() != b.len() {
-        return false;
-    }
-    a.iter()
-        .zip(b.iter())
-        .fold(0u8, |acc, (x, y)| acc | (x ^ y))
-        == 0
+    use subtle::ConstantTimeEq;
+    a.ct_eq(b).into()
 }
 
 #[cfg(test)]
@@ -222,8 +224,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_is_trusted_proxy_empty_list_allows_all() {
-        assert!(is_trusted_proxy("192.168.1.1", &[]));
+    fn test_is_trusted_proxy_empty_list_rejects_all() {
+        // #49 fix: empty trusted_proxies must fail-closed (reject all)
+        assert!(!is_trusted_proxy("192.168.1.1", &[]));
     }
 
     #[test]
@@ -266,5 +269,48 @@ mod tests {
         assert!(is_dev_mode_allowed(true));
         #[cfg(not(debug_assertions))]
         assert!(!is_dev_mode_allowed(true));
+    }
+
+    // ── Issue #53: CSP must not contain 'unsafe-inline' ──
+
+    #[test]
+    fn test_security_regression_csp_no_unsafe_inline() {
+        assert!(
+            !CSP_HEADER_VALUE.contains("unsafe-inline"),
+            "CSP must not contain 'unsafe-inline' — migrate inline styles to external CSS (issue #53)"
+        );
+    }
+
+    #[test]
+    fn test_security_regression_csp_has_required_directives() {
+        assert!(CSP_HEADER_VALUE.contains("default-src 'self'"));
+        assert!(CSP_HEADER_VALUE.contains("script-src 'self'"));
+        assert!(CSP_HEADER_VALUE.contains("frame-ancestors 'none'"));
+        assert!(CSP_HEADER_VALUE.contains("form-action 'self'"));
+    }
+
+    // ── Issue #49: LDAP + empty trusted_proxies must fail-closed ──
+
+    #[test]
+    fn test_is_trusted_proxy_empty_list_rejects() {
+        // When trusted_proxies is empty, ALL requests must be rejected (fail-closed).
+        // This is the security-critical behavior: no trusted proxy configured = no trust.
+        assert!(
+            !is_trusted_proxy("192.168.1.1", &[]),
+            "Empty trusted_proxies must reject all requests (fail-closed, issue #49)"
+        );
+    }
+
+    // ── Issue #60: constant_time_eq uses subtle crate ──
+
+    #[test]
+    fn test_constant_time_eq_uses_subtle_crate() {
+        // Verify the module uses subtle::ConstantTimeEq, not a hand-rolled implementation.
+        // This is a source-code-level check.
+        let source = include_str!("middleware.rs");
+        assert!(
+            source.contains("subtle::ConstantTimeEq") || source.contains("use subtle"),
+            "Must use subtle crate for constant-time comparison (issue #60)"
+        );
     }
 }

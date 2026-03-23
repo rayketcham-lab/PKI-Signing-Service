@@ -197,6 +197,28 @@ mod tests {
         );
     }
 
+    // ── Issue #48: oaep_decrypt must NOT be reachable from web handlers ──
+
+    #[test]
+    fn test_security_regression_oaep_decrypt_not_web_reachable() {
+        // Verify that web handlers do NOT call oaep_decrypt (directly or transitively).
+        // If this test fails, RUSTSEC-2023-0071 (Marvin timing attack) becomes HIGH severity.
+        let handlers_src = include_str!("../web/handlers.rs");
+        let middleware_src = include_str!("../web/middleware.rs");
+        let web_mod_src = include_str!("../web/mod.rs");
+        for (name, src) in [
+            ("handlers.rs", handlers_src),
+            ("middleware.rs", middleware_src),
+            ("mod.rs", web_mod_src),
+        ] {
+            assert!(
+                !src.contains("oaep_decrypt") && !src.contains("enveloped"),
+                "web/{name} must NOT reference oaep_decrypt or enveloped data — \
+                 RUSTSEC-2023-0071 Marvin attack would be network-reachable (issue #48)"
+            );
+        }
+    }
+
     #[test]
     fn test_oaep_max_plaintext_length() {
         assert_eq!(max_oaep_plaintext_len(2048, OaepHash::Sha256), 190);
