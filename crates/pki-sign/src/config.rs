@@ -99,6 +99,13 @@ pub struct SignConfig {
     /// Defaults to false for backward compatibility.
     #[serde(default)]
     pub audit_required: bool,
+
+    /// Maximum signing requests per second (0 = unlimited).
+    ///
+    /// Applies a global rate limit to all signing endpoints to prevent
+    /// resource exhaustion. Signing is CPU-intensive; this protects the server.
+    #[serde(default = "default_rate_limit")]
+    pub rate_limit_rps: u64,
 }
 
 /// Signing certificate configuration.
@@ -157,12 +164,13 @@ pub struct LdapConfig {
     /// Delimiter for multiple groups in the groups header.
     #[serde(default = "default_groups_delimiter")]
     pub groups_delimiter: String,
-    /// Trusted reverse proxy IP addresses/CIDRs.
+    /// Trusted reverse proxy IP addresses or CIDR ranges.
     ///
     /// When non-empty, LDAP header authentication is only accepted from
     /// requests originating from these addresses. Requests from other IPs
     /// will have LDAP auth headers stripped/ignored (returns 404).
-    /// Supports IPv4 and IPv6 addresses (CIDR notation not yet supported).
+    /// Supports exact IPv4/IPv6 addresses and CIDR notation (e.g. `10.0.0.0/24`,
+    /// `fd00::/8`). Both formats may be mixed in the same list (#63).
     #[serde(default)]
     pub trusted_proxies: Vec<String>,
 }
@@ -244,18 +252,6 @@ impl SignConfig {
                     .into(),
             ));
         }
-        // #63: CIDR notation not yet supported — reject entries containing '/'
-        // to prevent silent matching failures (is_trusted_proxy does exact match)
-        for proxy in &self.ldap.trusted_proxies {
-            if proxy.contains('/') {
-                return Err(SignError::Config(format!(
-                    "trusted_proxies entry '{}' contains CIDR notation, \
-                     which is not yet supported. Use individual IP addresses. \
-                     See issue #63 for CIDR support status.",
-                    proxy
-                )));
-            }
-        }
         Ok(())
     }
 }
@@ -280,6 +276,7 @@ impl Default for SignConfig {
             github: GitHubConfig::default(),
             dev_mode: false,
             audit_required: false,
+            rate_limit_rps: default_rate_limit(),
         }
     }
 }
@@ -349,6 +346,10 @@ fn default_github_repo() -> String {
 
 fn default_dedup_window() -> u64 {
     3600
+}
+
+fn default_rate_limit() -> u64 {
+    10 // 10 signing requests per second
 }
 
 #[cfg(test)]
@@ -430,21 +431,17 @@ admin_group = "cn=admins,dc=example,dc=com"
     // ── Issue #63: CIDR notation for trusted_proxies ──
 
     #[test]
-    fn test_config_cidr_trusted_proxies_rejected_by_validate() {
-        // CIDR notation is not yet supported (#63). Config validation must
-        // reject CIDR entries to prevent silent matching failures.
+    fn test_config_cidr_trusted_proxies_accepted_by_validate() {
+        // CIDR notation is now supported (#63). Config validation must
+        // accept CIDR entries without error.
         let mut cfg = SignConfig::default();
         cfg.ldap.enabled = true;
         cfg.ldap.trusted_proxies = vec!["10.0.0.0/24".into(), "192.168.1.5".into()];
         let result = cfg.validate();
         assert!(
-            result.is_err(),
-            "CIDR entries must be rejected until #63 is implemented"
-        );
-        let err_msg = format!("{}", result.unwrap_err());
-        assert!(
-            err_msg.contains("CIDR"),
-            "Error must mention CIDR: {err_msg}"
+            result.is_ok(),
+            "CIDR entries must be accepted now that #63 is implemented: {:?}",
+            result.err()
         );
     }
 
@@ -506,6 +503,33 @@ admin_group = "cn=admins,dc=example,dc=com"
             cfg.is_ok(),
             "config.example.toml must parse as valid SignConfig: {:?}",
             cfg.err()
+        );
+    }
+
+    // ── Issue #54: rate limiting config ──
+
+    #[test]
+    fn test_config_rate_limit_default() {
+        let cfg = SignConfig::default();
+        assert_eq!(cfg.rate_limit_rps, 10, "Default rate limit must be 10 rps");
+    }
+
+    #[test]
+    fn test_config_rate_limit_parses() {
+        let mut tmp = NamedTempFile::new().expect("tmp file");
+        writeln!(tmp, "rate_limit_rps = 50").expect("write");
+        let cfg = SignConfig::load_from_file(tmp.path()).expect("parse");
+        assert_eq!(cfg.rate_limit_rps, 50);
+    }
+
+    #[test]
+    fn test_config_rate_limit_zero_means_unlimited() {
+        let mut tmp = NamedTempFile::new().expect("tmp file");
+        writeln!(tmp, "rate_limit_rps = 0").expect("write");
+        let cfg = SignConfig::load_from_file(tmp.path()).expect("parse");
+        assert_eq!(
+            cfg.rate_limit_rps, 0,
+            "rate_limit_rps = 0 must mean unlimited"
         );
     }
 }

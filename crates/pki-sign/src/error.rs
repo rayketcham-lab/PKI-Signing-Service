@@ -1,4 +1,7 @@
 //! Error types for the pki-sign crate.
+//!
+//! [`SignError`] is the core library error type. It has no dependency on any
+//! web framework. Web-layer error handling lives in [`crate::web::error`].
 
 use thiserror::Error;
 
@@ -71,52 +74,4 @@ pub enum SignError {
     /// Internal error.
     #[error("Internal error: {0}")]
     Internal(String),
-}
-
-/// Web API error wrapper that implements `IntoResponse`.
-pub struct AppError {
-    pub error: SignError,
-    pub request_id: uuid::Uuid,
-}
-
-impl AppError {
-    pub fn new(error: SignError) -> Self {
-        Self {
-            error,
-            request_id: uuid::Uuid::new_v4(),
-        }
-    }
-}
-
-impl From<SignError> for AppError {
-    fn from(error: SignError) -> Self {
-        Self::new(error)
-    }
-}
-
-impl axum::response::IntoResponse for AppError {
-    fn into_response(self) -> axum::response::Response {
-        use axum::http::StatusCode;
-
-        let (status, code) = match &self.error {
-            SignError::InvalidPe(_) => (StatusCode::BAD_REQUEST, "invalid_pe"),
-            SignError::AlreadySigned(_) => (StatusCode::BAD_REQUEST, "already_signed"),
-            SignError::UnsupportedFileType(_) => {
-                (StatusCode::UNSUPPORTED_MEDIA_TYPE, "unsupported_type")
-            }
-            SignError::FileTooLarge { .. } => (StatusCode::PAYLOAD_TOO_LARGE, "file_too_large"),
-            SignError::Config(_) => (StatusCode::INTERNAL_SERVER_ERROR, "config_error"),
-            // Return 404 for auth failures to prevent endpoint enumeration
-            SignError::Unauthorized(_) => (StatusCode::NOT_FOUND, "not_found"),
-            _ => (StatusCode::INTERNAL_SERVER_ERROR, "internal_error"),
-        };
-
-        let body = serde_json::json!({
-            "error": code,
-            "message": self.error.to_string(),
-            "request_id": self.request_id.to_string(),
-        });
-
-        (status, axum::Json(body)).into_response()
-    }
 }

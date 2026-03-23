@@ -25,12 +25,14 @@
 //! - `POST /admin/certs/:name/default` — Set default certificate
 
 pub mod audit;
+pub mod error;
 pub mod gh_issues;
 mod handlers;
 pub mod ldap;
 pub(crate) mod middleware;
 
 pub use audit::AuditLogger;
+pub use error::AppError;
 
 use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
@@ -131,11 +133,25 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             middleware::admin_auth_middleware,
         ));
 
-    // LDAP middleware on all routes except health
-    let api_router = Router::new()
+    // Signing routes with concurrency limiting (#54)
+    // Signing is CPU-intensive; limit concurrent operations to prevent exhaustion.
+    let max_concurrent = state.config.rate_limit_rps;
+    let signing_router = Router::new()
         .route("/api/v1/sign", post(handlers::sign_file))
         .route("/api/v1/sign-detached", post(handlers::sign_detached))
-        .route("/api/v1/sign-batch", post(handlers::sign_batch))
+        .route("/api/v1/sign-batch", post(handlers::sign_batch));
+
+    // Apply concurrency limit only if configured (>0)
+    let signing_router = if max_concurrent > 0 {
+        signing_router.layer(tower::limit::ConcurrencyLimitLayer::new(
+            max_concurrent as usize,
+        ))
+    } else {
+        signing_router
+    };
+
+    // Read-only API routes (no concurrency limit needed)
+    let api_router = signing_router
         .route("/api/v1/verify", post(handlers::verify_file))
         .route("/api/v1/verify-detached", post(handlers::verify_detached))
         .route("/api/v1/status", get(handlers::server_status))

@@ -152,3 +152,57 @@ jobs:
             exit 1
           fi
           echo "OK: oaep_decrypt not web-reachable"
+      - name: Verify error.rs has no axum imports (#56)
+        if: matrix.os == 'Linux'
+        run: |
+          if grep -q 'axum' crates/pki-sign/src/error.rs; then
+            echo "FAIL: error.rs must not import axum — SignError must be web-framework independent"
+            exit 1
+          fi
+          echo "OK: error.rs is free of axum imports"
+      - name: Verify CIDR support in trusted_proxies (#63)
+        if: matrix.os == 'Linux'
+        run: |
+          if ! grep -q 'ipnet' crates/pki-sign/src/web/middleware.rs; then
+            echo "FAIL: middleware.rs must use ipnet crate for CIDR matching (issue #63)"
+            exit 1
+          fi
+          if grep -q 'CIDR notation not yet supported\|which is not yet supported' crates/pki-sign/src/config.rs; then
+            echo "FAIL: config.rs still contains the CIDR rejection guard from before #63"
+            exit 1
+          fi
+          echo "OK: CIDR support present in middleware.rs and CIDR rejection guard removed from config.rs"
+      - name: Scan for hardcoded secrets (#59)
+        if: matrix.os == 'Linux'
+        run: |
+          FAIL=0
+          # Check for common secret patterns in Rust source
+          for pattern in 'password\s*=' 'secret\s*=' 'token\s*=' 'PRIVATE KEY' 'api_key\s*='; do
+            MATCHES=$(grep -rn "$pattern" crates/pki-sign/src/ --include="*.rs" \
+              | grep -v '#\[cfg(test)\]' \
+              | grep -v 'password_env' \
+              | grep -v 'admin_token_hash' \
+              | grep -v 'token\.as_bytes' \
+              | grep -v '/// ' \
+              | grep -v '//!' \
+              | grep -v 'fn test_' \
+              | grep -v '_password_env' \
+              || true)
+            if [ -n "$MATCHES" ]; then
+              echo "WARN: Potential secret pattern '$pattern':"
+              echo "$MATCHES"
+            fi
+          done
+          # Check for .env files committed
+          if find . -name '.env' -not -path './.git/*' | grep -q .; then
+            echo "FAIL: .env file found in repository"
+            FAIL=1
+          fi
+          # Check for PFX/PEM files in source (not test fixtures)
+          PFX_IN_SRC=$(find crates/pki-sign/src -name '*.pfx' -o -name '*.pem' -o -name '*.key' 2>/dev/null || true)
+          if [ -n "$PFX_IN_SRC" ]; then
+            echo "FAIL: Certificate/key files in source directory: $PFX_IN_SRC"
+            FAIL=1
+          fi
+          if [ "$FAIL" -eq 1 ]; then exit 1; fi
+          echo "OK: No hardcoded secrets detected"

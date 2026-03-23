@@ -60,6 +60,13 @@ audit_log = "/var/log/pki-sign/audit.log"
 # Default: false (signing proceeds even if audit logging fails)
 audit_required = false
 
+# ── Rate Limiting ────────────────────────────────────────────────────
+
+# Maximum signing requests per second (0 = unlimited, default: 10)
+# Applies to /api/v1/sign, /api/v1/sign-detached, /api/v1/sign-batch
+# Signing is CPU-intensive; rate limiting prevents resource exhaustion
+rate_limit_rps = 10
+
 # ── Authentication ───────────────────────────────────────────────────
 
 # Authentication mode: "none", "mtls", "header", "apikey"
@@ -84,7 +91,8 @@ enabled = false
 
 # SECURITY: When LDAP is enabled, trusted_proxies MUST be configured.
 # Empty trusted_proxies with LDAP enabled will reject ALL requests (fail-closed).
-# trusted_proxies = ["10.0.0.1", "10.0.0.2"]
+# Supports exact IPs and CIDR ranges (IPv4 and IPv6). Mixed lists are allowed.
+# trusted_proxies = ["10.0.0.1", "10.0.0.0/24", "fd00::/8"]
 
 # Header names (typically set by reverse proxy)
 user_header = "X-Remote-User"

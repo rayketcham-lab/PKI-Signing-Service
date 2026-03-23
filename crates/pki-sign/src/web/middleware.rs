@@ -18,11 +18,28 @@ use super::AppState;
 /// Returns `false` if the trusted_proxies list is empty (fail-closed, #49).
 /// An empty list means no proxy is trusted — callers must configure at least
 /// one trusted proxy address when LDAP header auth is enabled.
+///
+/// Supports CIDR notation (e.g., `10.0.0.0/24`, `fd00::/8`) as well as
+/// exact IP addresses. Malformed entries that parse as neither CIDR nor IP
+/// fall back to exact string comparison (#63).
 fn is_trusted_proxy(client_ip: &str, trusted_proxies: &[String]) -> bool {
     if trusted_proxies.is_empty() {
         return false; // Fail-closed: no proxies configured = no trust
     }
-    trusted_proxies.iter().any(|proxy| proxy == client_ip)
+    let client: std::net::IpAddr = match client_ip.parse() {
+        Ok(ip) => ip,
+        Err(_) => return false,
+    };
+    trusted_proxies.iter().any(|proxy| {
+        // Try CIDR first, then exact IP match, then fall back to string match.
+        if let Ok(network) = proxy.parse::<ipnet::IpNet>() {
+            network.contains(&client)
+        } else if let Ok(ip) = proxy.parse::<std::net::IpAddr>() {
+            ip == client
+        } else {
+            proxy == client_ip // fallback for malformed entries
+        }
+    })
 }
 
 /// Returns true only in debug builds (dev_mode allowed).
@@ -298,6 +315,68 @@ mod tests {
         assert!(
             !is_trusted_proxy("192.168.1.1", &[]),
             "Empty trusted_proxies must reject all requests (fail-closed, issue #49)"
+        );
+    }
+
+    // ── Issue #63: CIDR notation for trusted_proxies ──
+
+    #[test]
+    fn test_is_trusted_proxy_cidr_match() {
+        // 10.0.0.5 is inside 10.0.0.0/24 — must be trusted.
+        let trusted = vec!["10.0.0.0/24".to_string()];
+        assert!(
+            is_trusted_proxy("10.0.0.5", &trusted),
+            "10.0.0.5 must match 10.0.0.0/24"
+        );
+    }
+
+    #[test]
+    fn test_is_trusted_proxy_cidr_no_match() {
+        // 192.168.1.5 is outside 10.0.0.0/24 — must not be trusted.
+        let trusted = vec!["10.0.0.0/24".to_string()];
+        assert!(
+            !is_trusted_proxy("192.168.1.5", &trusted),
+            "192.168.1.5 must not match 10.0.0.0/24"
+        );
+    }
+
+    #[test]
+    fn test_is_trusted_proxy_cidr_32_exact() {
+        // /32 is equivalent to an exact host address.
+        let trusted = vec!["10.0.0.1/32".to_string()];
+        assert!(
+            is_trusted_proxy("10.0.0.1", &trusted),
+            "10.0.0.1 must match 10.0.0.1/32"
+        );
+        assert!(
+            !is_trusted_proxy("10.0.0.2", &trusted),
+            "10.0.0.2 must not match 10.0.0.1/32"
+        );
+    }
+
+    #[test]
+    fn test_is_trusted_proxy_ipv6_cidr() {
+        // IPv6 CIDR support.
+        let trusted = vec!["fd00::/8".to_string()];
+        assert!(
+            is_trusted_proxy("fd00::1", &trusted),
+            "fd00::1 must match fd00::/8"
+        );
+        assert!(
+            !is_trusted_proxy("fe80::1", &trusted),
+            "fe80::1 must not match fd00::/8"
+        );
+    }
+
+    #[test]
+    fn test_is_trusted_proxy_invalid_cidr_treated_as_exact() {
+        // A malformed entry that is neither valid CIDR nor valid IP falls back
+        // to exact string comparison. The client IP won't equal the garbage
+        // entry, so the result should be false.
+        let trusted = vec!["not-a-valid-ip-or-cidr".to_string()];
+        assert!(
+            !is_trusted_proxy("10.0.0.1", &trusted),
+            "Malformed entry must not match a valid IP"
         );
     }
 

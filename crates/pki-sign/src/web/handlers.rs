@@ -15,9 +15,10 @@ use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use super::audit::AuditEntry;
+use super::error::AppError;
 use super::ldap::UserInfo;
 use super::AppState;
-use crate::error::{AppError, SignError};
+use crate::error::SignError;
 
 /// Check whether the authenticated user is authorized to use the requested certificate.
 ///

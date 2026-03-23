@@ -86,6 +86,12 @@ rustls-pemfile = "2"
 # File upload handling
 axum-extra = { version = "0.9", features = ["multipart"] }
 
+# CIDR matching for trusted_proxies (#63)
+ipnet = "2"
+
+# Rate limiting for signing endpoints (#54)
+tower = { version = "0.5", features = ["limit"] }
+
 # Temp files
 tempfile = "3"
 
@@ -102,7 +108,7 @@ default = []
 tempfile = { workspace = true }
 assert_cmd = { workspace = true }
 predicates = { workspace = true }
-tower = { version = "0.5", features = ["util"] }
+tower = { version = "0.5", features = ["util", "limit"] }
 http-body-util = "0.1"
 
 [[bin]]
