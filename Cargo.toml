@@ -3,7 +3,7 @@ resolver = "2"
 members = ["crates/pki-sign"]
 
 [workspace.package]
-version = "0.5.5"
+version = "0.5.7"
 edition = "2021"
 rust-version = "1.88"
 license = "Apache-2.0"
