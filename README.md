@@ -22,7 +22,7 @@ No OpenSSL. No `signtool.exe`. No external dependencies. One binary.
 [![OpenSSL](https://img.shields.io/badge/OpenSSL-not%20required-brightgreen?logo=openssl&logoColor=white)](https://github.com/rayketcham-lab/PKI-Signing-Service)
 
 <!-- Project Info -->
-[![Version](https://img.shields.io/badge/version-0.5.4-blue?logo=semver&logoColor=white)](https://github.com/rayketcham-lab/PKI-Signing-Service/releases/latest)
+[![Version](https://img.shields.io/badge/version-0.5.5-blue?logo=semver&logoColor=white)](https://github.com/rayketcham-lab/PKI-Signing-Service/releases/latest)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-green?logo=apache&logoColor=white)](LICENSE)
 [![Rust](https://img.shields.io/badge/language-Rust-orange?logo=rust&logoColor=white)](https://www.rust-lang.org/)
 [![MSRV](https://img.shields.io/badge/MSRV-1.88-orange?logo=rust&logoColor=white)](https://blog.rust-lang.org/)

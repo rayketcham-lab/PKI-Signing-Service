@@ -38,20 +38,38 @@ const DIGITAL_SIGNATURE_EX_STREAM: &str = "\x05MsiDigitalSignatureEx";
 
 /// Compute the Authenticode hash for an MSI file.
 ///
-/// Opens the MSI as a CFB compound document and hashes all stream data
-/// except the signature streams. Streams are processed in sorted order
-/// by name to ensure deterministic hashing.
+/// Opens the MSI as a CFB compound document and hashes:
+/// 1. All stream contents (excluding DigitalSignature/MsiDigitalSignatureEx),
+///    sorted by UTF-16LE name bytes (matching osslsigncode's `dirent_cmp_hash`)
+/// 2. Recurses into sub-storages
+/// 3. The root directory entry's CLSID (16 bytes) after all content
 fn compute_msi_hash(data: &[u8]) -> SignResult<Vec<u8>> {
     let cursor = Cursor::new(data);
     let comp = cfb::CompoundFile::open(cursor)
         .map_err(|e| SignError::Hash(format!("Failed to open MSI as compound document: {e}")))?;
 
-    // Collect all stream entries and their paths, excluding signature streams
-    let mut stream_entries: Vec<String> = Vec::new();
-    collect_stream_paths(&comp, "/", &mut stream_entries)?;
+    // Get root CLSID before we need mutable access
+    let root_clsid = {
+        let root_entry = comp.root_entry();
+        *root_entry.clsid().as_bytes()
+    };
 
-    // Sort by name for deterministic hashing
-    stream_entries.sort();
+    // Collect all stream entries (path + UTF-16LE name for sorting)
+    let mut stream_entries: Vec<(Vec<u8>, String)> = Vec::new();
+    collect_stream_paths_utf16(&comp, "/", &mut stream_entries)?;
+
+    // Sort by raw UTF-16LE name bytes (memcmp), matching osslsigncode's dirent_cmp_hash.
+    // When names match up to the shorter length, the longer name sorts first.
+    stream_entries.sort_by(|(a_name, _), (b_name, _)| {
+        let min_len = a_name.len().min(b_name.len());
+        match a_name[..min_len].cmp(&b_name[..min_len]) {
+            std::cmp::Ordering::Equal => {
+                // Longer name sorts first (returns -1 in C code)
+                b_name.len().cmp(&a_name.len())
+            }
+            other => other,
+        }
+    });
 
     // Re-open to read streams (need mutable borrow)
     let cursor = Cursor::new(data);
@@ -60,7 +78,7 @@ fn compute_msi_hash(data: &[u8]) -> SignResult<Vec<u8>> {
 
     let mut hasher = Sha256::new();
 
-    for path in &stream_entries {
+    for (_, path) in &stream_entries {
         let mut stream = comp
             .open_stream(path)
             .map_err(|e| SignError::Hash(format!("Failed to open stream '{path}': {e}")))?;
@@ -71,15 +89,18 @@ fn compute_msi_hash(data: &[u8]) -> SignResult<Vec<u8>> {
         hasher.update(&buf);
     }
 
+    // Hash root directory CLSID (16 bytes) after all stream content
+    hasher.update(root_clsid);
+
     Ok(hasher.finalize().to_vec())
 }
 
-/// Recursively collect stream paths from a compound document, excluding
-/// signature streams.
-fn collect_stream_paths<F: Read + Seek>(
+/// Recursively collect stream paths with UTF-16LE sort keys, excluding
+/// signature streams. Each entry is (utf16le_name_bytes, full_path).
+fn collect_stream_paths_utf16<F: Read + Seek>(
     comp: &cfb::CompoundFile<F>,
     dir: &str,
-    out: &mut Vec<String>,
+    out: &mut Vec<(Vec<u8>, String)>,
 ) -> SignResult<()> {
     let entries: Vec<cfb::Entry> = comp
         .read_storage(dir)
@@ -95,13 +116,20 @@ fn collect_stream_paths<F: Read + Seek>(
         };
 
         if entry.is_stream() {
-            // Skip signature streams
-            if name == DIGITAL_SIGNATURE_STREAM || name == DIGITAL_SIGNATURE_EX_STREAM {
+            // Skip signature streams (only at root level per osslsigncode)
+            if dir == "/"
+                && (name == DIGITAL_SIGNATURE_STREAM || name == DIGITAL_SIGNATURE_EX_STREAM)
+            {
                 continue;
             }
-            out.push(full_path);
+            // Convert name to UTF-16LE bytes for sorting
+            let utf16_bytes: Vec<u8> = name
+                .encode_utf16()
+                .flat_map(|ch| ch.to_le_bytes())
+                .collect();
+            out.push((utf16_bytes, full_path));
         } else if entry.is_storage() {
-            collect_stream_paths(comp, &full_path, out)?;
+            collect_stream_paths_utf16(comp, &full_path, out)?;
         }
     }
 

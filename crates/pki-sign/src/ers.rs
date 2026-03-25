@@ -1297,4 +1297,85 @@ mod tests {
         let root_hash = parsed.verify_data_hash(&h1).unwrap();
         assert_eq!(root_hash.len(), 32);
     }
+
+    #[test]
+    fn test_builder_add_data_hashes_batch() {
+        let hashes: Vec<Vec<u8>> = (0..5u8)
+            .map(|i| ErsDigestAlgorithm::Sha256.digest(&[i]))
+            .collect();
+        let tst = mock_timestamp_token();
+        let er = EvidenceRecordBuilder::new(ErsDigestAlgorithm::Sha256)
+            .add_data_hashes(hashes)
+            .build(tst);
+
+        let chain = &er.archive_timestamp_sequence.chains[0];
+        assert!(
+            chain.timestamps[0].reduced_hashtree.is_some(),
+            "Batch add with 5 docs should produce a hash tree"
+        );
+    }
+
+    #[test]
+    fn test_builder_compute_root_hash_empty() {
+        let builder = EvidenceRecordBuilder::new(ErsDigestAlgorithm::Sha256);
+        assert!(builder.compute_root_hash().is_empty());
+    }
+
+    #[test]
+    fn test_merkle_root_empty_input() {
+        let root = compute_merkle_root(&[], ErsDigestAlgorithm::Sha256);
+        assert!(root.is_empty());
+    }
+
+    #[test]
+    fn test_merkle_tree_odd_leaves() {
+        // 3 leaves: two pair up, one gets promoted
+        let hashes: Vec<Vec<u8>> = (0..3u8)
+            .map(|i| ErsDigestAlgorithm::Sha256.digest(&[i]))
+            .collect();
+        let root = compute_merkle_root(&hashes, ErsDigestAlgorithm::Sha256);
+        assert_eq!(root.len(), 32);
+        // Root must differ from all inputs
+        for h in &hashes {
+            assert_ne!(&root, h);
+        }
+    }
+
+    #[test]
+    fn test_evidence_record_with_hashtree_constructor() {
+        let h1 = ErsDigestAlgorithm::Sha384.digest(b"doc X");
+        let h2 = ErsDigestAlgorithm::Sha384.digest(b"doc Y");
+        let tree = build_merkle_tree(&[h1, h2], ErsDigestAlgorithm::Sha384);
+        let tst = mock_timestamp_token();
+        let er = EvidenceRecord::with_hashtree(ErsDigestAlgorithm::Sha384, tree, tst);
+        assert_eq!(er.digest_algorithms, vec![ErsDigestAlgorithm::Sha384]);
+
+        let chain = &er.archive_timestamp_sequence.chains[0];
+        assert!(chain.timestamps[0].reduced_hashtree.is_some());
+        assert_eq!(
+            chain.timestamps[0].digest_algorithm,
+            Some(ErsDigestAlgorithm::Sha384)
+        );
+    }
+
+    #[test]
+    fn test_evidence_record_roundtrip_preserves_content_info() {
+        let tst = mock_timestamp_token();
+        let er = EvidenceRecord::new(ErsDigestAlgorithm::Sha256, tst.clone());
+        let ci = er.to_content_info();
+
+        // ContentInfo should contain the evidence record OID and the encoded ER
+        assert_eq!(ci[0], 0x30);
+        let er_der = er.to_der();
+        // The ER DER bytes should appear inside the ContentInfo
+        assert!(ci.windows(er_der.len()).any(|w| w == er_der.as_slice()));
+    }
+
+    #[test]
+    fn test_digest_algorithm_id_der_starts_with_sequence() {
+        // AlgorithmIdentifier is a SEQUENCE
+        assert_eq!(ErsDigestAlgorithm::Sha256.algorithm_id_der()[0], 0x30);
+        assert_eq!(ErsDigestAlgorithm::Sha384.algorithm_id_der()[0], 0x30);
+        assert_eq!(ErsDigestAlgorithm::Sha512.algorithm_id_der()[0], 0x30);
+    }
 }

@@ -9,6 +9,9 @@ on:
         description: 'Release tag (e.g., v0.3.0)'
         required: true
 
+permissions:
+  contents: read
+
 env:
   CARGO_TERM_COLOR: always
 
@@ -133,7 +136,7 @@ jobs:
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4.3.1
       - name: Install cosign
-        uses: sigstore/cosign-installer@3454372be43e8003ee7b71f2005238174e07bbf7  # v3.8.2
+        uses: sigstore/cosign-installer@ba7bc0a3fef59531c69a25acd34668d6d3fe6f22  # v4.1.0
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4
         with:
           path: artifacts/

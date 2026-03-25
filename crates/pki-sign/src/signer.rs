@@ -3810,7 +3810,7 @@ mod tests {
     /// osslsigncode should be able to parse the signature structure and produce
     /// a matching Authenticode digest.
     #[tokio::test]
-    #[ignore = "CAB Authenticode format not yet compatible with osslsigncode — see issue #45"]
+    #[ignore = "requires osslsigncode"]
     async fn e2e_interop_cab_verify_osslsigncode() {
         if skip_if_no_osslsigncode() {
             eprintln!("skipping: osslsigncode not available");
@@ -3877,7 +3877,7 @@ mod tests {
     /// Interop: Sign a minimal CAB file with pki-sign using ECDSA-P256, then
     /// verify with osslsigncode.
     #[tokio::test]
-    #[ignore = "CAB Authenticode format not yet compatible with osslsigncode — see issue #45"]
+    #[ignore = "requires osslsigncode"]
     async fn e2e_interop_cab_verify_osslsigncode_ecdsa() {
         if skip_if_no_osslsigncode() {
             eprintln!("skipping: osslsigncode not available");
@@ -3936,57 +3936,84 @@ mod tests {
     /// header (CabinetSignatureReservedHeader), followed by `body_len` bytes of
     /// body data.  This replicates the logic in `cab::tests::build_test_cab` but
     /// is placed here in the signer tests to avoid importing private test helpers.
-    fn build_interop_test_cab(body_len: usize) -> Vec<u8> {
-        // CAB constants (mirrors cab.rs values)
+    fn build_interop_test_cab(_body_len: usize) -> Vec<u8> {
+        // Build a structurally valid CAB with:
+        //   CFHEADER (with reserve for Authenticode)
+        //   CFFOLDER (1 folder, NONE compression)
+        //   CFFILE   (1 file: "test.txt")
+        //   CFDATA   (1 data block containing file content)
+        //
+        // Microsoft CAB spec: https://learn.microsoft.com/en-us/previous-versions/bb417343(v=msdn.10)
         const CAB_MAGIC: &[u8; 4] = b"MSCF";
         const CFHDR_RESERVE_PRESENT: u16 = 0x0004;
         const CAB_SIG_RESERVE_HEADER_SIZE: u32 = 20;
-        const CFHEADER_FIXED_SIZE: usize = 36;
+
+        // File content to embed
+        let file_content = b"Hello from pki-sign CAB interop test!\n";
+        let file_name = b"test.txt\0"; // null-terminated
 
         let mut cab = Vec::new();
 
-        // "MSCF" magic
-        cab.extend_from_slice(CAB_MAGIC);
-        // reserved1
-        cab.extend_from_slice(&0u32.to_le_bytes());
-        // cbCabinet placeholder
+        // ─── CFHEADER (36 bytes fixed + 4 reserve fields + 20 reserve data) ───
+        cab.extend_from_slice(CAB_MAGIC); // signature
+        cab.extend_from_slice(&0u32.to_le_bytes()); // reserved1
         let cb_cabinet_pos = cab.len();
-        cab.extend_from_slice(&0u32.to_le_bytes());
-        // reserved2
-        cab.extend_from_slice(&0u32.to_le_bytes());
-        // coffFiles
-        cab.extend_from_slice(&0u32.to_le_bytes());
-        // reserved3
-        cab.extend_from_slice(&0u32.to_le_bytes());
-        // versionMinor, versionMajor
-        cab.push(3);
-        cab.push(1);
-        // cFolders
-        cab.extend_from_slice(&0u16.to_le_bytes());
-        // cFiles
-        cab.extend_from_slice(&0u16.to_le_bytes());
-        // flags: cfhdrRESERVE_PRESENT
-        cab.extend_from_slice(&CFHDR_RESERVE_PRESENT.to_le_bytes());
-        // setID
-        cab.extend_from_slice(&0u16.to_le_bytes());
-        // iCabinet
-        cab.extend_from_slice(&0u16.to_le_bytes());
+        cab.extend_from_slice(&0u32.to_le_bytes()); // cbCabinet (placeholder)
+        cab.extend_from_slice(&0u32.to_le_bytes()); // reserved2
+        let coff_files_pos = cab.len();
+        cab.extend_from_slice(&0u32.to_le_bytes()); // coffFiles (placeholder)
+        cab.extend_from_slice(&0u32.to_le_bytes()); // reserved3
+        cab.push(3); // versionMinor
+        cab.push(1); // versionMajor
+        cab.extend_from_slice(&1u16.to_le_bytes()); // cFolders = 1
+        cab.extend_from_slice(&1u16.to_le_bytes()); // cFiles = 1
+        cab.extend_from_slice(&CFHDR_RESERVE_PRESENT.to_le_bytes()); // flags
+        cab.extend_from_slice(&0u16.to_le_bytes()); // setID
+        cab.extend_from_slice(&0u16.to_le_bytes()); // iCabinet
 
-        assert_eq!(cab.len(), CFHEADER_FIXED_SIZE);
-
-        // cbCFHeader, cbCFFolder, cbCFData
+        // Reserve fields: cbCFHeader (u16), cbCFFolder (u8), cbCFData (u8)
         cab.extend_from_slice(&(CAB_SIG_RESERVE_HEADER_SIZE as u16).to_le_bytes());
-        cab.push(0);
-        cab.push(0);
+        cab.push(0); // cbCFFolder
+        cab.push(0); // cbCFData
 
         // CabinetSignatureReservedHeader (20 bytes)
-        cab.extend_from_slice(&CAB_SIG_RESERVE_HEADER_SIZE.to_le_bytes()); // headerSize
+        // u16 junk=0, u16 remaining_size=16 (standard CAB Authenticode format)
+        cab.extend_from_slice(&[0x00, 0x00, 0x10, 0x00]);
         cab.extend_from_slice(&0u32.to_le_bytes()); // sigOffset
         cab.extend_from_slice(&0u32.to_le_bytes()); // sigSize
         cab.extend_from_slice(&[0u8; 8]); // padding
 
-        // Body data
-        cab.extend(std::iter::repeat_n(0xBBu8, body_len));
+        // ─── CFFOLDER (8 bytes) ───
+        // coffCabStart: offset to first CFDATA block (will be filled after CFFILE)
+        let coff_cab_start_pos = cab.len();
+        cab.extend_from_slice(&0u32.to_le_bytes()); // coffCabStart (placeholder)
+        cab.extend_from_slice(&1u16.to_le_bytes()); // cCFData = 1
+        cab.extend_from_slice(&0u16.to_le_bytes()); // typeCompress = NONE (0)
+
+        // ─── CFFILE (16 bytes fixed + filename) ───
+        // Record coffFiles offset
+        let coff_files = cab.len() as u32;
+        cab[coff_files_pos..coff_files_pos + 4].copy_from_slice(&coff_files.to_le_bytes());
+
+        cab.extend_from_slice(&(file_content.len() as u32).to_le_bytes()); // cbFile
+        cab.extend_from_slice(&0u32.to_le_bytes()); // uoffFolderStart
+        cab.extend_from_slice(&0u16.to_le_bytes()); // iFolder = 0
+                                                    // date: 2026-03-25 = ((2026-1980)<<9) | (3<<5) | 25 = (46<<9)|(3<<5)|25 = 23552|96|25 = 23673
+        cab.extend_from_slice(&23673u16.to_le_bytes()); // date
+                                                        // time: 12:00 = (12<<11) = 24576
+        cab.extend_from_slice(&24576u16.to_le_bytes()); // time
+        cab.extend_from_slice(&0x20u16.to_le_bytes()); // attribs = _A_ARCH
+        cab.extend_from_slice(file_name); // szName (null-terminated)
+
+        // ─── CFDATA (8 bytes header + data) ───
+        let coff_cab_start = cab.len() as u32;
+        cab[coff_cab_start_pos..coff_cab_start_pos + 4]
+            .copy_from_slice(&coff_cab_start.to_le_bytes());
+
+        cab.extend_from_slice(&0u32.to_le_bytes()); // csum (checksum, 0 = none)
+        cab.extend_from_slice(&(file_content.len() as u16).to_le_bytes()); // cbData
+        cab.extend_from_slice(&(file_content.len() as u16).to_le_bytes()); // cbUncomp
+        cab.extend_from_slice(file_content);
 
         // Fill cbCabinet
         let total = cab.len() as u32;
@@ -4004,7 +4031,7 @@ mod tests {
     /// uses the `cfb` crate to read and write the `\x05DigitalSignature` stream.
     /// This test exercises the full sign → osslsigncode verify round-trip.
     #[tokio::test]
-    #[ignore = "MSI Authenticode digest mismatch with osslsigncode — see issue #46"]
+    #[ignore = "requires osslsigncode"]
     async fn e2e_interop_msi_verify_osslsigncode() {
         if skip_if_no_osslsigncode() {
             eprintln!("skipping: osslsigncode not available");
@@ -4043,20 +4070,21 @@ mod tests {
         let stderr = String::from_utf8_lossy(&verify_out.stderr);
         let combined = format!("{stdout}\n{stderr}");
 
-        // osslsigncode should parse the MSI Authenticode structure.
+        // osslsigncode uses "Current DigitalSignature" / "Calculated DigitalSignature"
+        // for MSI files (not "Current message digest" like PE/CAB).
         assert!(
-            combined.contains("Current message digest"),
+            combined.contains("Current DigitalSignature"),
             "osslsigncode should parse MSI Authenticode signature:\n{combined}"
         );
 
         let current = combined
             .lines()
-            .find(|l| l.contains("Current message digest"))
+            .find(|l| l.contains("Current DigitalSignature"))
             .map(|l| l.split(':').next_back().unwrap_or("").trim())
             .unwrap_or("");
         let calculated = combined
             .lines()
-            .find(|l| l.contains("Calculated message digest"))
+            .find(|l| l.contains("Calculated DigitalSignature"))
             .map(|l| l.split(':').next_back().unwrap_or("").trim())
             .unwrap_or("");
 
@@ -4153,4 +4181,6 @@ mod tests {
             "Section Characteristics should be non-zero"
         );
     }
+
+    // ─── Debug: dump raw CAB signature for osslsigncode diagnosis ───
 }

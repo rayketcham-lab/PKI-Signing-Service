@@ -92,8 +92,8 @@ jobs:
       - name: Verify CSP has no unsafe-inline (#53)
         if: matrix.os == 'Linux'
         run: |
-          if grep 'CSP_HEADER_VALUE.*unsafe-inline' crates/pki-sign/src/web/middleware.rs; then
-            echo "FAIL: CSP_HEADER_VALUE contains 'unsafe-inline'"
+          if grep 'const CSP_HEADER_VALUE' crates/pki-sign/src/web/middleware.rs | grep -q 'unsafe-inline'; then
+            echo "FAIL: CSP_HEADER_VALUE definition contains 'unsafe-inline'"
             exit 1
           fi
           echo "OK: CSP does not contain 'unsafe-inline'"

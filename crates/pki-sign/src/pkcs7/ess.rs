@@ -712,4 +712,147 @@ mod tests {
         // Second element should be [1] IMPLICIT (0x81)
         assert!(gns.contains(&0x81));
     }
+
+    // ─── SecurityClassification additional coverage ───
+
+    #[test]
+    fn test_security_classification_all_values() {
+        assert_eq!(SecurityClassification::Unmarked.value(), 0);
+        assert_eq!(SecurityClassification::Unclassified.value(), 1);
+        assert_eq!(SecurityClassification::Restricted.value(), 2);
+        assert_eq!(SecurityClassification::Confidential.value(), 3);
+        assert_eq!(SecurityClassification::Secret.value(), 4);
+        assert_eq!(SecurityClassification::TopSecret.value(), 5);
+    }
+
+    #[test]
+    fn test_security_classification_custom_value() {
+        let custom = SecurityClassification::Custom(42);
+        assert_eq!(custom.value(), 42);
+    }
+
+    #[test]
+    fn test_security_classification_custom_ordering() {
+        // Custom(10) should be between TopSecret(5) and Custom(100)
+        assert!(SecurityClassification::TopSecret < SecurityClassification::Custom(10));
+        assert!(SecurityClassification::Custom(10) < SecurityClassification::Custom(100));
+        assert!(SecurityClassification::Unmarked < SecurityClassification::Custom(1));
+    }
+
+    #[test]
+    fn test_security_classification_equality() {
+        assert_eq!(
+            SecurityClassification::Secret,
+            SecurityClassification::Secret
+        );
+        assert_ne!(
+            SecurityClassification::Secret,
+            SecurityClassification::TopSecret
+        );
+        assert_eq!(
+            SecurityClassification::Custom(7),
+            SecurityClassification::Custom(7)
+        );
+        assert_ne!(
+            SecurityClassification::Custom(7),
+            SecurityClassification::Custom(8)
+        );
+    }
+
+    // ─── SecurityLabel additional coverage ───
+
+    #[test]
+    fn test_security_label_all_classifications() {
+        let policy_oid = vec![0x06, 0x03, 0x55, 0x04, 0x00];
+        for class in [
+            SecurityClassification::Unmarked,
+            SecurityClassification::Restricted,
+            SecurityClassification::Confidential,
+            SecurityClassification::Secret,
+            SecurityClassification::TopSecret,
+            SecurityClassification::Custom(42),
+        ] {
+            let label = SecurityLabel::new(policy_oid.clone(), class);
+            let der = label.to_der();
+            assert_eq!(der[0], 0x31, "SecurityLabel must be a SET");
+            assert!(der.len() > 4);
+        }
+    }
+
+    // ─── ReceiptsFrom::FirstTierOnly ───
+
+    #[test]
+    fn test_receipt_request_first_tier_only() {
+        let rr = ReceiptRequest {
+            signed_content_identifier: ContentIdentifier::generate(),
+            receipts_from: ReceiptsFrom::FirstTierOnly,
+            receipts_to: vec![encode_rfc822_general_names("admin@example.com")],
+        };
+        let der = rr.to_der();
+        assert_eq!(der[0], 0x30);
+        // Should contain INTEGER 1 somewhere (for FirstTierOnly)
+        assert!(
+            der.windows(3).any(|w| w == [0x02, 0x01, 0x01]),
+            "FirstTierOnly should encode INTEGER 1"
+        );
+    }
+
+    // ─── MLExpansionHistory multi-entry ───
+
+    #[test]
+    fn test_ml_expansion_history_multiple_entries() {
+        let history = MLExpansionHistory::new()
+            .add_entry(MlData::new("list-a@corp.com"))
+            .add_entry(MlData::new("list-b@corp.com"));
+        let der = history.to_der();
+        assert_eq!(der[0], 0x30);
+        // Should contain both emails
+        assert!(der
+            .windows(b"list-a@corp.com".len())
+            .any(|w| w == b"list-a@corp.com"));
+        assert!(der
+            .windows(b"list-b@corp.com".len())
+            .any(|w| w == b"list-b@corp.com"));
+    }
+
+    #[test]
+    fn test_ml_expansion_history_default() {
+        let history = MLExpansionHistory::default();
+        assert!(history.entries.is_empty());
+    }
+
+    // ─── SmimeCapability with parameters ───
+
+    #[test]
+    fn test_smime_capability_with_custom_params() {
+        let cap = SmimeCapability {
+            capability_oid: asn1::OID_AES256_GCM.to_vec(),
+            parameters: Some(vec![0x05, 0x00]), // NULL parameter
+        };
+        let der = cap.to_der();
+        assert_eq!(der[0], 0x30);
+        // Should contain the NULL parameter bytes
+        assert!(der.windows(2).any(|w| w == [0x05, 0x00]));
+    }
+
+    #[test]
+    fn test_smime_capabilities_empty() {
+        let caps = SmimeCapabilities::new();
+        assert!(caps.capabilities.is_empty());
+        let der = caps.to_der();
+        // Empty SEQUENCE
+        assert_eq!(der, vec![0x30, 0x00]);
+    }
+
+    // ─── ContentIdentifier uniqueness ───
+
+    #[test]
+    fn test_content_identifier_unique_per_call() {
+        let ci1 = ContentIdentifier::generate();
+        let ci2 = ContentIdentifier::generate();
+        assert_ne!(
+            ci1.identifier_bytes, ci2.identifier_bytes,
+            "Generated identifiers must be unique"
+        );
+    }
 }

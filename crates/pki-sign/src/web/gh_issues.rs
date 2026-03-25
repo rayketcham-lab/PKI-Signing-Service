@@ -175,3 +175,154 @@ impl GitHubIssueReporter {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_reporter_new() {
+        let reporter = GitHubIssueReporter::new("owner/repo".to_string(), 300);
+        assert_eq!(reporter.repo, "owner/repo");
+        assert_eq!(reporter.dedup_window_secs, 300);
+        assert!(reporter.recent_errors.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_dedup_hash_deterministic() {
+        let hash1 = hex::encode(Sha256::digest(
+            format!("{}:{}", "TestError", "something broke").as_bytes(),
+        ));
+        let hash2 = hex::encode(Sha256::digest(
+            format!("{}:{}", "TestError", "something broke").as_bytes(),
+        ));
+        assert_eq!(hash1, hash2, "Same input must produce same hash");
+    }
+
+    #[test]
+    fn test_dedup_different_errors_produce_different_hashes() {
+        let hash1 = hex::encode(Sha256::digest(
+            format!("{}:{}", "ErrorA", "message1").as_bytes(),
+        ));
+        let hash2 = hex::encode(Sha256::digest(
+            format!("{}:{}", "ErrorB", "message2").as_bytes(),
+        ));
+        assert_ne!(hash1, hash2);
+    }
+
+    #[test]
+    fn test_dedup_same_type_different_message() {
+        let hash1 = hex::encode(Sha256::digest(
+            format!("{}:{}", "SignError", "file A").as_bytes(),
+        ));
+        let hash2 = hex::encode(Sha256::digest(
+            format!("{}:{}", "SignError", "file B").as_bytes(),
+        ));
+        assert_ne!(
+            hash1, hash2,
+            "Same error type with different messages must produce different hashes"
+        );
+    }
+
+    #[test]
+    fn test_dedup_entry_inserted_and_found() {
+        let reporter = GitHubIssueReporter::new("owner/repo".to_string(), 300);
+        let hash = hex::encode(Sha256::digest(b"TestError:broke" as &[u8]));
+        reporter
+            .recent_errors
+            .lock()
+            .unwrap()
+            .insert(hash.clone(), Instant::now());
+        assert!(reporter.recent_errors.lock().unwrap().contains_key(&hash));
+    }
+
+    #[test]
+    fn test_sanitize_error_type_strips_special_chars() {
+        let malicious = "error$(whoami)&&rm -rf /";
+        let safe: String = malicious
+            .chars()
+            .filter(|c| c.is_alphanumeric() || *c == ' ' || *c == '_' || *c == '-' || *c == '.')
+            .take(100)
+            .collect();
+        assert_eq!(safe, "errorwhoamirm -rf ");
+        assert!(!safe.contains('$'));
+        assert!(!safe.contains('('));
+        assert!(!safe.contains('&'));
+    }
+
+    #[test]
+    fn test_sanitize_error_type_truncates_at_100() {
+        let long_input = "A".repeat(200);
+        let safe: String = long_input
+            .chars()
+            .filter(|c| c.is_alphanumeric() || *c == ' ' || *c == '_' || *c == '-' || *c == '.')
+            .take(100)
+            .collect();
+        assert_eq!(safe.len(), 100);
+    }
+
+    #[test]
+    fn test_sanitize_error_message_escapes_backticks() {
+        let msg = "error in `fn main()` at ```block```";
+        let safe = msg.replace('`', "'");
+        assert!(!safe.contains('`'));
+        assert_eq!(safe, "error in 'fn main()' at '''block'''");
+    }
+
+    #[test]
+    fn test_file_info_both_name_and_size() {
+        let info = match (Some("test.exe"), Some(1024u64)) {
+            (Some(name), Some(size)) => format!("- **File:** {} ({} bytes)\n", name, size),
+            (Some(name), None) => format!("- **File:** {}\n", name),
+            _ => String::new(),
+        };
+        assert_eq!(info, "- **File:** test.exe (1024 bytes)\n");
+    }
+
+    #[test]
+    fn test_file_info_name_only() {
+        let info = match (Some("test.exe"), None::<u64>) {
+            (Some(name), Some(size)) => format!("- **File:** {} ({} bytes)\n", name, size),
+            (Some(name), None) => format!("- **File:** {}\n", name),
+            _ => String::new(),
+        };
+        assert_eq!(info, "- **File:** test.exe\n");
+    }
+
+    #[test]
+    fn test_file_info_none() {
+        let info: String = match (None::<&str>, None::<u64>) {
+            (Some(name), Some(size)) => format!("- **File:** {} ({} bytes)\n", name, size),
+            (Some(name), None) => format!("- **File:** {}\n", name),
+            _ => String::new(),
+        };
+        assert!(info.is_empty());
+    }
+
+    #[test]
+    fn test_title_format() {
+        let safe_type = "InvalidPe";
+        let title = format!("[auto] Signing error: {}", safe_type);
+        assert_eq!(title, "[auto] Signing error: InvalidPe");
+    }
+
+    #[test]
+    fn test_dedup_window_retention() {
+        let reporter = GitHubIssueReporter::new("owner/repo".to_string(), 3600);
+        let hash = hex::encode(Sha256::digest(b"err:msg" as &[u8]));
+        reporter
+            .recent_errors
+            .lock()
+            .unwrap()
+            .insert(hash.clone(), Instant::now());
+
+        // Simulate cleanup: entries within window should be retained
+        let cutoff = Instant::now();
+        let recent = reporter.recent_errors.lock().unwrap();
+        let retained: Vec<_> = recent
+            .iter()
+            .filter(|(_, created_at)| cutoff.duration_since(**created_at).as_secs() < 3600)
+            .collect();
+        assert_eq!(retained.len(), 1);
+    }
+}

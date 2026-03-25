@@ -60,8 +60,13 @@ const CAB_MAGIC: &[u8; 4] = b"MSCF";
 /// Flag indicating reserved fields are present in the cabinet header.
 const CFHDR_RESERVE_PRESENT: u16 = 0x0004;
 
-/// Size of the Authenticode reserved header in the CFHEADER.
+/// Size of the Authenticode reserved header in the CFHEADER (20 bytes total).
 const CAB_SIG_RESERVE_HEADER_SIZE: u32 = 20;
+
+/// First 4 bytes of the signature reserved header per osslsigncode convention:
+/// u16 junk=0, u16 remaining_size=16 (0x0010).
+/// Written as LE bytes: 00 00 10 00
+const CAB_SIG_RESERVE_MAGIC: [u8; 4] = [0x00, 0x00, 0x10, 0x00];
 
 /// Size of the fixed CFHEADER fields (before optional reserved area).
 const CFHEADER_FIXED_SIZE: usize = 36;
@@ -125,17 +130,18 @@ fn parse_cab_header(data: &[u8]) -> SignResult<CabInfo> {
             ));
         }
 
-        // Parse the signature reserve header
-        let header_size = u32::from_le_bytes([
-            data[reserve_start],
-            data[reserve_start + 1],
-            data[reserve_start + 2],
-            data[reserve_start + 3],
-        ]);
+        // Parse the signature reserve header.
+        // Format: u16 junk (0), u16 remaining_size (0x0010), u32 sigOffset, u32 sigSize, 8-byte padding
+        // Accept both our legacy format (u32 headerSize=20) and the standard format (00 00 10 00).
+        let reserve_magic = &data[reserve_start..reserve_start + 4];
+        let is_standard = reserve_magic == CAB_SIG_RESERVE_MAGIC;
+        let is_legacy = reserve_magic == [0x14, 0x00, 0x00, 0x00]; // u32 LE 20
+        let is_unsigned = reserve_magic == [0x00, 0x00, 0x00, 0x00]; // all zeros (no sig yet)
 
-        if header_size != CAB_SIG_RESERVE_HEADER_SIZE {
+        if !is_standard && !is_legacy && !is_unsigned {
             return Err(SignError::Hash(format!(
-                "CAB signature reserved header size mismatch: expected {CAB_SIG_RESERVE_HEADER_SIZE}, got {header_size}"
+                "CAB signature reserved header unrecognized: {:02X?}",
+                reserve_magic
             )));
         }
 
@@ -182,33 +188,41 @@ fn parse_cab_header(data: &[u8]) -> SignResult<CabInfo> {
 
 /// Compute the Authenticode hash for a CAB file.
 ///
-/// The hash covers the entire cabinet EXCEPT:
-/// - The sigOffset field (4 bytes at `cab_info.sig_offset_pos`)
-/// - The sigSize field (4 bytes at `cab_info.sig_size_pos`)
-/// - Any appended signature data beyond `cab_info.end_of_cab`
+/// The hash selectively includes specific header fields, matching
+/// osslsigncode/signtool behavior. The included ranges are:
+///
+/// 1. `[0..4]`  — MSCF magic
+/// 2. `[8..34]` — cbCabinet through setID (skips reserved1 at 4-7)
+/// 3. `[56..60]` — last 4 bytes of abReserve (padding)
+/// 4. `[60..sigOffset]` — CFFOLDER + CFFILE + CFDATA
+///
+/// Excluded: reserved1 (4-7), iCabinet (34-35), reserve metadata
+/// and signature fields (36-55), and the appended signature data.
 fn compute_cab_hash(data: &[u8], cab_info: &CabInfo) -> SignResult<Vec<u8>> {
     let end = cab_info.end_of_cab.min(data.len());
     let mut hasher = Sha256::new();
 
-    // Build exclusion ranges (must be sorted by offset)
-    let exclusions = [
-        (cab_info.sig_offset_pos, 4usize),
-        (cab_info.sig_size_pos, 4usize),
-    ];
+    // The reserve area starts at CFHEADER_FIXED_SIZE (36) + 4 (cbCFHeader/cbCFFolder/cbCFData)
+    let reserve_start = CFHEADER_FIXED_SIZE + 4; // = 40
+    let reserve_end = reserve_start + CAB_SIG_RESERVE_HEADER_SIZE as usize; // = 60
 
-    let mut pos = 0;
-    for &(exc_start, exc_len) in &exclusions {
-        if exc_start >= end {
-            break;
-        }
-        if pos < exc_start {
-            hasher.update(&data[pos..exc_start]);
-        }
-        pos = exc_start + exc_len;
+    // Range 1: MSCF magic [0..4]
+    hasher.update(&data[0..4]);
+
+    // Range 2: cbCabinet through setID [8..34]
+    // (skips reserved1 at 4-7, skips iCabinet at 34-35)
+    hasher.update(&data[8..34]);
+
+    // Range 3: Last 4 bytes of the 20-byte abReserve [56..60]
+    // (the padding region — sigOffset/sigSize/magic are excluded)
+    if data.len() >= reserve_end {
+        hasher.update(&data[reserve_end - 4..reserve_end]);
     }
 
-    if pos < end {
-        hasher.update(&data[pos..end]);
+    // Range 4: Everything from after the reserve area to the signature [60..end]
+    // (CFFOLDER + CFFILE + CFDATA blocks)
+    if reserve_end < end {
+        hasher.update(&data[reserve_end..end]);
     }
 
     Ok(hasher.finalize().to_vec())
@@ -216,29 +230,30 @@ fn compute_cab_hash(data: &[u8], cab_info: &CabInfo) -> SignResult<Vec<u8>> {
 
 /// Embed an Authenticode signature into a CAB file.
 ///
-/// The signature is appended after the cabinet data, and the reserved
-/// header fields are updated to point to it.
+/// The PKCS#7 DER signature data is appended directly after the cabinet
+/// data (no WIN_CERTIFICATE wrapper — unlike PE, CAB uses raw PKCS#7).
+/// The reserved header fields are updated to point to the signature.
 fn embed_cab_signature(data: &[u8], cab_info: &CabInfo, pkcs7_der: &[u8]) -> SignResult<Vec<u8>> {
     let end_of_cab = cab_info.end_of_cab;
 
     // Start with the cabinet data (without any existing signature)
     let mut output = data[..end_of_cab].to_vec();
 
-    // Update cbCabinet in the header to reflect new total size
-    let new_total_size = (end_of_cab + pkcs7_der.len()) as u32;
-    output[8..12].copy_from_slice(&new_total_size.to_le_bytes());
+    // cbCabinet stays as the original cab size (cabinet data only)
+    let cab_size = end_of_cab as u32;
+    output[8..12].copy_from_slice(&cab_size.to_le_bytes());
 
     // Update sigOffset to point to end of cab data
     let sig_offset = end_of_cab as u32;
     output[cab_info.sig_offset_pos..cab_info.sig_offset_pos + 4]
         .copy_from_slice(&sig_offset.to_le_bytes());
 
-    // Update sigSize
+    // Update sigSize to the raw PKCS#7 size
     let sig_size = pkcs7_der.len() as u32;
     output[cab_info.sig_size_pos..cab_info.sig_size_pos + 4]
         .copy_from_slice(&sig_size.to_le_bytes());
 
-    // Append the signature
+    // Append the raw PKCS#7 DER data
     output.extend_from_slice(pkcs7_der);
 
     Ok(output)
@@ -361,8 +376,8 @@ mod tests {
         cab.push(0); // cbCFData
 
         // Reserved header data (20 bytes):
-        // headerSize: u32 = 20
-        cab.extend_from_slice(&CAB_SIG_RESERVE_HEADER_SIZE.to_le_bytes());
+        // u16 junk=0, u16 remaining_size=16 (standard CAB Authenticode format)
+        cab.extend_from_slice(&CAB_SIG_RESERVE_MAGIC);
         // sigOffset: u32 = 0 (no signature yet)
         cab.extend_from_slice(&0u32.to_le_bytes());
         // sigSize: u32 = 0 (no signature yet)
@@ -461,12 +476,12 @@ mod tests {
 
         let signed = embed_cab_signature(&cab, &info, &fake_sig).unwrap();
 
-        // Total size should be original cab + signature
+        // Total size should be original cab + raw PKCS#7
         assert_eq!(signed.len(), info.end_of_cab + fake_sig.len());
 
-        // cbCabinet should be updated
+        // cbCabinet should be the original cab size (not including appended sig)
         let new_cb = u32::from_le_bytes([signed[8], signed[9], signed[10], signed[11]]);
-        assert_eq!(new_cb as usize, signed.len());
+        assert_eq!(new_cb as usize, info.end_of_cab);
 
         // sigOffset should point to end of original cab
         let sig_off = u32::from_le_bytes([
@@ -477,7 +492,7 @@ mod tests {
         ]);
         assert_eq!(sig_off as usize, info.end_of_cab);
 
-        // sigSize should match signature length
+        // sigSize should match raw PKCS#7 length
         let sig_sz = u32::from_le_bytes([
             signed[info.sig_size_pos],
             signed[info.sig_size_pos + 1],
@@ -486,7 +501,7 @@ mod tests {
         ]);
         assert_eq!(sig_sz as usize, fake_sig.len());
 
-        // Signature data should be at the end
+        // Raw PKCS#7 data should be at the end
         assert_eq!(&signed[info.end_of_cab..], &fake_sig);
     }
 
@@ -499,10 +514,31 @@ mod tests {
         let fake_sig = vec![0x01; 16];
         let signed = embed_cab_signature(&cab, &info, &fake_sig).unwrap();
 
-        // Body data should be preserved
+        // Body data should be preserved (sigOffset/sigSize are updated, but body is intact)
         assert_eq!(
             &signed[body_start..body_start + 64],
             &cab[body_start..body_start + 64]
+        );
+    }
+
+    #[test]
+    fn test_embed_cab_cbcabinet_reflects_cab_only() {
+        // cbCabinet must NOT include the appended signature — it reflects
+        // the original cabinet data size, and the signature is outside it.
+        let cab = build_test_cab(64);
+        let info = parse_cab_header(&cab).unwrap();
+        let fake_sig = vec![0x30, 0x82, 0x01, 0x00]; // fake PKCS#7
+
+        let signed = embed_cab_signature(&cab, &info, &fake_sig).unwrap();
+
+        let cb_cabinet = u32::from_le_bytes(signed[8..12].try_into().unwrap());
+        assert_eq!(
+            cb_cabinet as usize, info.end_of_cab,
+            "cbCabinet must equal original cabinet size, not total file size"
+        );
+        assert!(
+            signed.len() > cb_cabinet as usize,
+            "File must be larger than cbCabinet (signature appended)"
         );
     }
 }
