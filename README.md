@@ -74,6 +74,8 @@ No OpenSSL. No `signtool.exe`. No external dependencies. One binary.
 > [!TIP]
 > One binary handles CLI signing, a REST API server, and a standalone TSA server. Deploy however you need it.
 
+See the [interactive demos](https://rayketcham-lab.github.io/PKI-Signing-Service/demo.html) for six asciinema walkthroughs covering the CLI, API, auditor, and more.
+
 ## Quick Start
 
 ### Install
@@ -408,6 +410,8 @@ COMMANDS:
 | Module | Description |
 |--------|-------------|
 | `pe/` | PE/COFF parser, Authenticode hash, signature embedding |
+| `cab` | Cabinet archive parser and Authenticode signer |
+| `msi` | MSI compound-document parser and Authenticode signer |
 | `pkcs7/` | CMS/PKCS#7 ASN.1 builder --- SignedData, DigestedData, EnvelopedData, ECDH, KEM |
 | `signer` | Signing orchestrator --- PFX load, file type detection, pipeline coordination |
 | `verifier` | Signature verification --- digest comparison, chain validation, EKU checking |
