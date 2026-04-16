@@ -1557,6 +1557,9 @@ mod tests {
     }
 
     /// Issue a POST request with an arbitrary body against the router.
+    ///
+    /// Sets `Content-Length` from `body.len()` to match realistic clients —
+    /// without it, the body-limit layer cannot pre-reject oversized uploads.
     async fn post_raw(
         state: Arc<AppState>,
         uri: &str,
@@ -1570,6 +1573,7 @@ mod tests {
             .method("POST")
             .uri(uri)
             .header(axum::http::header::CONTENT_TYPE, content_type)
+            .header(axum::http::header::CONTENT_LENGTH, body.len())
             .body(axum::body::Body::from(body))
             .unwrap();
         router.oneshot(request).await.unwrap()
@@ -1578,8 +1582,6 @@ mod tests {
     /// Build a minimal multipart/form-data body with a single `file` field.
     ///
     /// Returns `(content_type_header, body_bytes)`.
-    /// Scaffolded for upcoming multipart upload handler tests.
-    #[allow(dead_code)]
     fn build_multipart_with_file(filename: &str, data: &[u8]) -> (String, Vec<u8>) {
         let boundary = "testboundary1234567890";
         let content_type = format!("multipart/form-data; boundary={boundary}");
@@ -1699,6 +1701,131 @@ mod tests {
         let json: serde_json::Value =
             serde_json::from_slice(&bytes).expect("fallback body is JSON");
         assert_eq!(json["error"], "not_found");
+    }
+
+    // ─── Body-limit enforcement tests (P1 security fix) ─────────────────────
+
+    /// Build an [`AppState`] with a tiny `max_upload_size` so tests can exceed
+    /// the limit without allocating huge buffers.
+    fn make_test_state_with_max(max_upload_size: u64) -> Arc<AppState> {
+        let tmp = tempfile::NamedTempFile::new().expect("tempfile");
+        let audit_path = tmp.path().to_path_buf();
+        std::mem::forget(tmp);
+
+        let config = SignConfig {
+            dev_mode: true,
+            require_timestamp: false,
+            audit_log: audit_path.clone(),
+            max_upload_size,
+            ..SignConfig::default()
+        };
+
+        Arc::new(AppState {
+            config,
+            credentials: tokio::sync::RwLock::new(vec![]),
+            default_credential: tokio::sync::RwLock::new(0),
+            audit: crate::web::audit::AuditLogger::new(&audit_path).expect("audit logger"),
+            started_at: std::time::Instant::now(),
+            stats: crate::web::SigningStats::default(),
+            gh_reporter: None,
+        })
+    }
+
+    /// POST a multipart body larger than `max_upload_size` — must be rejected
+    /// at the axum layer with 413 Payload Too Large, NOT 500 Internal.
+    ///
+    /// Without pre-buffer enforcement the oversized body is streamed through
+    /// the multipart extractor and the resulting error was mapped to 500,
+    /// letting attackers observe internal error messages and forcing the
+    /// server to read significant data before rejecting.
+    #[tokio::test]
+    async fn test_sign_oversized_body_rejected_with_413() {
+        let max = 1024u64;
+        let state = make_test_state_with_max(max);
+        // Build a multipart body whose payload exceeds `max`.
+        let oversized = vec![0xAAu8; (max as usize) * 4];
+        let (ct, body) = build_multipart_with_file("big.exe", &oversized);
+        assert!(body.len() as u64 > max);
+
+        let resp = post_raw(state, "/api/v1/sign", &ct, body).await;
+        assert_eq!(
+            resp.status(),
+            axum::http::StatusCode::PAYLOAD_TOO_LARGE,
+            "oversized upload must return 413, got {}",
+            resp.status()
+        );
+    }
+
+    /// Same for `/api/v1/verify` — every multipart endpoint must enforce the
+    /// limit uniformly.
+    #[tokio::test]
+    async fn test_verify_oversized_body_rejected_with_413() {
+        let max = 1024u64;
+        let state = make_test_state_with_max(max);
+        let oversized = vec![0xAAu8; (max as usize) * 4];
+        let (ct, body) = build_multipart_with_file("big.exe", &oversized);
+
+        let resp = post_raw(state, "/api/v1/verify", &ct, body).await;
+        assert_eq!(
+            resp.status(),
+            axum::http::StatusCode::PAYLOAD_TOO_LARGE,
+            "oversized verify upload must return 413, got {}",
+            resp.status()
+        );
+    }
+
+    /// A request whose declared `Content-Length` exceeds the limit must be
+    /// rejected BEFORE the body is read (pre-buffer enforcement). This is
+    /// the defining property of the P1 fix: no bytes of a lying client's
+    /// payload are buffered when the header already reveals the overflow.
+    #[tokio::test]
+    async fn test_content_length_header_exceeds_limit_rejected_with_413() {
+        use tower::ServiceExt as _;
+
+        let max = 1024u64;
+        let state = make_test_state_with_max(max);
+        let router = crate::web::build_router(state);
+
+        // Craft a tiny body but a Content-Length header that claims it's huge.
+        // axum will compare CL against the limit and reject with 413 before
+        // streaming. We test with a legitimately oversized body to avoid
+        // ambiguous framing; the point is Content-Length > max.
+        let body_bytes = vec![0u8; (max as usize) * 2];
+        let request = axum::http::Request::builder()
+            .method("POST")
+            .uri("/api/v1/sign")
+            .header(
+                axum::http::header::CONTENT_TYPE,
+                "multipart/form-data; boundary=xxxx",
+            )
+            .header(axum::http::header::CONTENT_LENGTH, body_bytes.len())
+            .body(axum::body::Body::from(body_bytes))
+            .unwrap();
+
+        let resp = router.oneshot(request).await.unwrap();
+        assert_eq!(
+            resp.status(),
+            axum::http::StatusCode::PAYLOAD_TOO_LARGE,
+            "Content-Length > max_upload_size must return 413 pre-buffer"
+        );
+    }
+
+    /// Requests within the limit must NOT be rejected by the body-limit
+    /// layer (regression guard: over-eager enforcement would 413 legit uploads).
+    #[tokio::test]
+    async fn test_under_limit_multipart_not_413() {
+        let max = 64 * 1024u64;
+        let state = make_test_state_with_max(max);
+        let small = vec![0u8; 256]; // well under max
+        let (ct, body) = build_multipart_with_file("small.exe", &small);
+        assert!((body.len() as u64) < max);
+
+        let resp = post_raw(state, "/api/v1/sign", &ct, body).await;
+        assert_ne!(
+            resp.status(),
+            axum::http::StatusCode::PAYLOAD_TOO_LARGE,
+            "under-limit request must not be rejected as too large"
+        );
     }
 
     fn make_user(groups: Vec<String>, is_admin: bool) -> UserInfo {

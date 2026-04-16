@@ -7,6 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.8] - 2026-04-16
+
+### Security
+- **P1 hardening: multipart body-limit pre-buffer enforcement** — added `tower_http::limit::RequestBodyLimitLayer` so `Content-Length` exceeding `max_upload_size` returns `413 Payload Too Large` before any body bytes are buffered. Prevents memory-exhaustion via lying/huge uploads at multipart-extractor edge.
+- **CVE: rustls-webpki name-constraint bypasses** (RUSTSEC-2026-0098, RUSTSEC-2026-0099) — bumped `rustls-webpki` from 0.103.10 to 0.103.12 via `cargo update`. URI-name and wildcard name-constraint validation is now correct.
+
+### Added
+- Four body-limit regression tests in `web::handlers` covering sign/verify oversized-body 413, Content-Length pre-buffer 413, and under-limit negative assertion.
+- Interactive demos landing page at `docs/demo.html` with six asciinema scenarios.
+
+## [0.5.7] - 2026-03-25
+
+### Fixed
+- **CAB Authenticode interop** (#45) — reserve-header magic must be `00 00 10 00` (not `14 00 00 00`); hash covers selective fields `[0..4]+[8..34]+[56..60]+[60..sigOffset]` so osslsigncode/signtool accept output.
+- **MSI Authenticode interop** (#46) — hash includes root CLSID (16 bytes) after stream contents; stream order uses raw UTF-16LE byte sort.
+- CI test-coverage expansion for CAB/MSI interop.
+
+## [0.5.6] - 2026-03-23
+
+### Added
+- **P-521 ECDSA signing** end-to-end with web e2e tests.
+- **CIDR-aware reverse-proxy trust** for `X-Forwarded-For` / `X-Real-IP` — only trusted CIDRs may set `client_ip`.
+- **Rate limiting** middleware per-endpoint / per-IP.
+- **Cosign signing** support (keyless + key-pair) for OCI artifacts.
+- **Secret scanning** pre-commit hook and CI gate.
+- `client_ip` field on all audit-log records.
+- Unit tests for `config`, `audit`, `ldap` modules.
+
+### Changed
+- **Error-handling refactor** — unified `AppError` variants across the web layer; consistent 4xx/5xx mapping.
+- All GitHub Actions pinned to commit SHAs.
+
+### Security
+- Team-review fixes: dead-code removal, key `Zeroize` on drop paths, CI permission hardening.
+- CSP hardening and fail-closed auth middleware.
+- Assorted CVE patches (see commit `21879da`).
+
 ## [0.5.4] - 2026-03-20
 
 ### Added

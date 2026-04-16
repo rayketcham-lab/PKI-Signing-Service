@@ -42,6 +42,7 @@ use axum::extract::DefaultBodyLimit;
 use axum::routing::{get, post};
 use axum::{middleware as axum_middleware, Router};
 use tokio::sync::RwLock;
+use tower_http::limit::RequestBodyLimitLayer;
 use tower_http::services::ServeDir;
 use tower_http::trace::TraceLayer;
 use tracing::info;
@@ -181,7 +182,14 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         )
         // Catch-all
         .fallback(handlers::fallback)
-        // Layers (applied bottom-up: trace first, then security headers, then body limit)
+        // Layers (applied bottom-up: trace first, then security headers, then body limit).
+        //
+        // `RequestBodyLimitLayer` returns 413 Payload Too Large when `Content-Length`
+        // exceeds `max_upload_size`, rejecting the request BEFORE any body is
+        // buffered — the P1 security fix. `DefaultBodyLimit::max` is also set so
+        // axum-extra's `Multipart` extractor uses the same limit (instead of its
+        // internal 2 MB default) for mid-stream (chunked/no-CL) overflow bounding.
+        .layer(RequestBodyLimitLayer::new(max_body))
         .layer(DefaultBodyLimit::max(max_body))
         .layer(axum_middleware::from_fn(
             middleware::security_headers_middleware,
