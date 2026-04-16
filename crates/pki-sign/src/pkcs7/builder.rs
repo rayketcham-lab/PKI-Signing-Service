@@ -111,16 +111,22 @@ pub enum SigningAlgorithm {
     /// Ed25519 (RFC 8410/8419 — pure EdDSA, no separate digest).
     Ed25519,
     /// ML-DSA-44 (FIPS 204, RFC 9882 — pure scheme, SHA-256 for CMS digest).
+    #[cfg(feature = "pq-experimental")]
     MlDsa44,
     /// ML-DSA-65 (FIPS 204, RFC 9882 — pure scheme, SHA-512 for CMS digest).
+    #[cfg(feature = "pq-experimental")]
     MlDsa65,
     /// ML-DSA-87 (FIPS 204, RFC 9882 — pure scheme, SHA-512 for CMS digest).
+    #[cfg(feature = "pq-experimental")]
     MlDsa87,
     /// SLH-DSA-SHA2-128s (FIPS 205, RFC 9909 — pure scheme, SHA-256 for CMS digest).
+    #[cfg(feature = "pq-experimental")]
     SlhDsaSha2128s,
     /// SLH-DSA-SHA2-192s (FIPS 205, RFC 9909 — pure scheme, SHA-512 for CMS digest).
+    #[cfg(feature = "pq-experimental")]
     SlhDsaSha2192s,
     /// SLH-DSA-SHA2-256s (FIPS 205, RFC 9909 — pure scheme, SHA-512 for CMS digest).
+    #[cfg(feature = "pq-experimental")]
     SlhDsaSha2256s,
 }
 
@@ -138,11 +144,17 @@ impl SigningAlgorithm {
             SigningAlgorithm::EcdsaSha384 => &asn1::ECDSA_WITH_SHA384_ALGORITHM_ID,
             SigningAlgorithm::EcdsaSha512 => &asn1::ECDSA_WITH_SHA512_ALGORITHM_ID,
             SigningAlgorithm::Ed25519 => &asn1::ED25519_ALGORITHM_ID,
+            #[cfg(feature = "pq-experimental")]
             SigningAlgorithm::MlDsa44 => &asn1::ML_DSA_44_ALGORITHM_ID,
+            #[cfg(feature = "pq-experimental")]
             SigningAlgorithm::MlDsa65 => &asn1::ML_DSA_65_ALGORITHM_ID,
+            #[cfg(feature = "pq-experimental")]
             SigningAlgorithm::MlDsa87 => &asn1::ML_DSA_87_ALGORITHM_ID,
+            #[cfg(feature = "pq-experimental")]
             SigningAlgorithm::SlhDsaSha2128s => &asn1::SLH_DSA_SHA2_128S_ALGORITHM_ID,
+            #[cfg(feature = "pq-experimental")]
             SigningAlgorithm::SlhDsaSha2192s => &asn1::SLH_DSA_SHA2_192S_ALGORITHM_ID,
+            #[cfg(feature = "pq-experimental")]
             SigningAlgorithm::SlhDsaSha2256s => &asn1::SLH_DSA_SHA2_256S_ALGORITHM_ID,
         }
     }
@@ -156,17 +168,18 @@ impl SigningAlgorithm {
         match self {
             SigningAlgorithm::RsaSha256
             | SigningAlgorithm::RsaPssSha256
-            | SigningAlgorithm::EcdsaSha256
-            | SigningAlgorithm::MlDsa44
-            | SigningAlgorithm::SlhDsaSha2128s => DigestAlgorithm::Sha256,
+            | SigningAlgorithm::EcdsaSha256 => DigestAlgorithm::Sha256,
             SigningAlgorithm::RsaSha384
             | SigningAlgorithm::RsaPssSha384
             | SigningAlgorithm::EcdsaSha384 => DigestAlgorithm::Sha384,
             SigningAlgorithm::RsaSha512
             | SigningAlgorithm::RsaPssSha512
             | SigningAlgorithm::EcdsaSha512
-            | SigningAlgorithm::Ed25519
-            | SigningAlgorithm::MlDsa65
+            | SigningAlgorithm::Ed25519 => DigestAlgorithm::Sha512,
+            #[cfg(feature = "pq-experimental")]
+            SigningAlgorithm::MlDsa44 | SigningAlgorithm::SlhDsaSha2128s => DigestAlgorithm::Sha256,
+            #[cfg(feature = "pq-experimental")]
+            SigningAlgorithm::MlDsa65
             | SigningAlgorithm::MlDsa87
             | SigningAlgorithm::SlhDsaSha2192s
             | SigningAlgorithm::SlhDsaSha2256s => DigestAlgorithm::Sha512,
@@ -2822,7 +2835,9 @@ mod tests {
     }
 
     // ─── PQC Signing Algorithm Tests (RFC 9882 / RFC 9909) ───
+    // Gated behind `pq-experimental` — default builds don't expose these variants.
 
+    #[cfg(feature = "pq-experimental")]
     #[test]
     fn test_signing_algorithm_ml_dsa_44() {
         let alg = SigningAlgorithm::MlDsa44;
@@ -2833,6 +2848,7 @@ mod tests {
         assert_eq!(id[12], 0x11); // ML-DSA-44 OID last byte
     }
 
+    #[cfg(feature = "pq-experimental")]
     #[test]
     fn test_signing_algorithm_ml_dsa_65() {
         let alg = SigningAlgorithm::MlDsa65;
@@ -2841,6 +2857,7 @@ mod tests {
         assert_eq!(id[12], 0x12); // ML-DSA-65 OID last byte
     }
 
+    #[cfg(feature = "pq-experimental")]
     #[test]
     fn test_signing_algorithm_ml_dsa_87() {
         let alg = SigningAlgorithm::MlDsa87;
@@ -2849,6 +2866,7 @@ mod tests {
         assert_eq!(id[12], 0x13); // ML-DSA-87 OID last byte
     }
 
+    #[cfg(feature = "pq-experimental")]
     #[test]
     fn test_signing_algorithm_slh_dsa_128s() {
         let alg = SigningAlgorithm::SlhDsaSha2128s;
@@ -2857,6 +2875,7 @@ mod tests {
         assert_eq!(id[12], 0x14); // SLH-DSA-SHA2-128s OID last byte
     }
 
+    #[cfg(feature = "pq-experimental")]
     #[test]
     fn test_signing_algorithm_slh_dsa_192s() {
         let alg = SigningAlgorithm::SlhDsaSha2192s;
@@ -2865,6 +2884,7 @@ mod tests {
         assert_eq!(id[12], 0x16); // SLH-DSA-SHA2-192s OID last byte
     }
 
+    #[cfg(feature = "pq-experimental")]
     #[test]
     fn test_signing_algorithm_slh_dsa_256s() {
         let alg = SigningAlgorithm::SlhDsaSha2256s;
@@ -2873,6 +2893,7 @@ mod tests {
         assert_eq!(id[12], 0x18); // SLH-DSA-SHA2-256s OID last byte
     }
 
+    #[cfg(feature = "pq-experimental")]
     #[test]
     fn test_signed_data_builder_ml_dsa_44_signer() {
         let cert = build_test_cert(100, "PQC-Signer");
@@ -2903,6 +2924,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "pq-experimental")]
     #[test]
     fn test_cms_alg_protection_ml_dsa_87() {
         let attr = build_cms_algorithm_protection_attr_ex(

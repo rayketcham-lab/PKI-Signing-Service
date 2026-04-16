@@ -52,7 +52,7 @@ p256 = { version = "0.13", features = ["ecdsa", "pem", "ecdh"] }
 p384 = { version = "0.13", features = ["ecdsa", "pem", "ecdh"] }
 p521 = { version = "0.13", features = ["ecdsa", "pem", "ecdh"] }
 ed25519-dalek = { version = "2", features = ["pkcs8"] }
-ml-dsa = { version = "0.0.4", features = ["pkcs8"] }
+ml-dsa = { version = "0.0.4", features = ["pkcs8"], optional = true }
 signature = "2"
 pkcs8 = { version = "0.10", features = ["pem"] }
 hkdf = "0.12"
@@ -106,6 +106,13 @@ http-body-util = "0.1"
 
 [features]
 default = []
+# Experimental post-quantum signing (ML-DSA / SLH-DSA).
+#
+# Default-off because the ml-dsa 0.0.4 crate is pre-1.0 and carries open
+# timing-side-channel / implementation advisories (RUSTSEC-2025-0144,
+# CVE-2026-22705, CVE-2026-24850, GHSA-h37v-hp6w-2pp8). Gating the surface
+# keeps those CVEs out of the default build's dep graph entirely.
+pq-experimental = ["dep:ml-dsa"]
 
 [dev-dependencies]
 tempfile = { workspace = true }

@@ -41,7 +41,17 @@ jobs:
       - name: Install cargo-audit
         run: cargo install --locked cargo-audit
       - name: cargo audit (RustSec advisories)
-        run: cargo audit --deny warnings
+        # Ignores must match ci.yml + daily-health.yml:
+        #   RUSTSEC-2023-0071 — rsa Marvin attack, oaep_decrypt exists but is not web-reachable (covered by security regression test)
+        #   RUSTSEC-2025-0134 — rustls-pemfile unmaintained, transitive via reqwest/rustls
+        #   RUSTSEC-2025-0144 — ml-dsa timing; pq-experimental-only (gh #72), absent from default dep graph
+        #   RUSTSEC-2026-0097 — rand unsound-with-custom-logger, transitive via rsa/quinn/p12-keystore, no custom logger used
+        run: >-
+          cargo audit --deny warnings
+          --ignore RUSTSEC-2023-0071
+          --ignore RUSTSEC-2025-0134
+          --ignore RUSTSEC-2025-0144
+          --ignore RUSTSEC-2026-0097
       - name: Install cargo-deny
         run: cargo install --locked cargo-deny
       - name: cargo deny (advisories, licenses, bans, sources)

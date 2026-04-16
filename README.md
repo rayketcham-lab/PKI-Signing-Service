@@ -63,7 +63,7 @@ No OpenSSL. No `signtool.exe`. No external dependencies. One binary.
 - **Detached CMS/PKCS#7** --- Sign any file with a `.p7s` detached signature
 - **PowerShell signing** --- PS1 scripts with Base64 PKCS#7 signature blocks
 - **RFC 3161 timestamping** --- Counter-signatures for long-term validity
-- **Multi-algorithm** --- RSA (2048-4096), ECDSA P-256/P-384/P-521, Ed25519, ML-DSA-44/65/87
+- **Multi-algorithm** --- RSA (2048-4096), ECDSA P-256/P-384/P-521, Ed25519. Post-quantum (ML-DSA-44/65/87) opt-in via `--features pq-experimental`.
 - **Signature verification** --- Validate Authenticode and detached CMS signatures
 - **PFX/PKCS#12 import** --- Load signing credentials from `.pfx` files
 - **Web service mode** --- REST API for Code Signing as a Service
@@ -246,6 +246,7 @@ server = "CN=Server Signers,OU=Groups,DC=corp,DC=example,DC=com"
 |--------|------|-------------|
 | `POST` | `/api/v1/sign` | Upload and sign a file (multipart) |
 | `POST` | `/api/v1/sign-detached` | Create detached CMS signature |
+| `POST` | `/api/v1/sign-batch` | Sign up to 10 files, return a ZIP + `signing_summary.csv` |
 | `POST` | `/api/v1/verify` | Verify an Authenticode signature |
 | `POST` | `/api/v1/verify-detached` | Verify a detached signature |
 | `GET` | `/api/v1/status` | Server status and statistics |
@@ -280,6 +281,26 @@ curl -X POST https://sign.example.com/api/v1/sign \
 #   X-PKI-Sign-Certificate: desktop
 #   X-PKI-Sign-Timestamp: true
 #   X-PKI-Sign-Duration-Ms: 342
+```
+
+</details>
+
+<details>
+<summary><strong>Batch sign (curl)</strong></summary>
+
+```bash
+# Upload up to 10 files in a single request; response is a ZIP archive
+curl -X POST https://sign.example.com/api/v1/sign-batch \
+  -H "X-Remote-User: jdoe" \
+  -F "file=@app1.exe" \
+  -F "file=@app2.dll" \
+  -F "file=@installer.msi" \
+  -F "cert_type=desktop" \
+  -o signed-batch.zip
+
+# The ZIP contains signed_<name> for each input plus signing_summary.csv
+# with columns: file, status, algorithm, timestamped, duration_ms, error
+unzip -l signed-batch.zip
 ```
 
 </details>
@@ -465,7 +486,7 @@ COMMANDS:
 
 ## Security
 
-- **No OpenSSL** --- Pure Rust crypto stack (`rsa`, `p256`, `p384`, `p521`, `ed25519-dalek`, `ml-dsa`, `sha2`, `aes-gcm`). TLS via `rustls` with `aws-lc-rs` backend.
+- **No OpenSSL** --- Pure Rust crypto stack (`rsa`, `p256`, `p384`, `p521`, `ed25519-dalek`, `sha2`, `aes-gcm`; `ml-dsa` only with `--features pq-experimental`). TLS via `rustls` with `aws-lc-rs` backend.
 - **OpenSSL banned** --- `cargo-deny` blocks `openssl`, `openssl-sys`, and `native-tls` crate usage.
 - **Key zeroization** --- Private keys wrapped in `Zeroizing<>` for secure memory cleanup.
 - **Audit trail** --- Every sign/verify operation logged with request ID, file hash, signer, client IP, timestamp status, and duration.
@@ -536,9 +557,9 @@ The project is stable for Authenticode, detached CMS, and RFC 3161 signing workl
 
 ### v0.6 --- PQ-experimental opt-in + structural clean-up
 
-- **Feature-gate ML-DSA behind `pq-experimental`** ([#72](https://github.com/rayketcham-lab/PKI-Signing-Service/issues/72)) --- default builds drop the `ml-dsa` / `slh-dsa` dependencies entirely. Operators who want PQC opt in explicitly with `cargo build --features pq-experimental`.
+- **Feature-gate ML-DSA behind `pq-experimental`** ([#72](https://github.com/rayketcham-lab/PKI-Signing-Service/issues/72)) --- ✅ **shipped** in the current `main`. Default builds drop the `ml-dsa` / `slh-dsa` dependencies entirely; post-quantum opt-in via `cargo build --features pq-experimental`. The `default_build_cargo_tree_omits_ml_dsa` test pins the invariant.
 - **Decompose `signer.rs` / `verifier.rs` monoliths** ([#55](https://github.com/rayketcham-lab/PKI-Signing-Service/issues/55)) --- extract PFX loading and cert-validation helpers into dedicated modules without public-API churn.
-- **ML-DSA timing-side-channel tracking** ([#42](https://github.com/rayketcham-lab/PKI-Signing-Service/issues/42)) --- follow the upstream `ml-dsa` 0.0.4 → stable release and drop the `cargo-audit` ignores as soon as a constant-time Decompose lands.
+- **ML-DSA timing-side-channel tracking** ([#42](https://github.com/rayketcham-lab/PKI-Signing-Service/issues/42)) --- follow the upstream `ml-dsa` 0.0.4 → stable release and drop the `pq-experimental`-only `cargo-audit` ignores as soon as a constant-time Decompose lands.
 
 ### v0.7 --- Hybrid / composite certificates
 

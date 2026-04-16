@@ -22,6 +22,7 @@ use p384::ecdsa::SigningKey as P384SigningKey;
 use p521::ecdsa::SigningKey as P521SigningKey;
 
 use ed25519_dalek::SigningKey as Ed25519SigningKey;
+#[cfg(feature = "pq-experimental")]
 use ml_dsa::{MlDsa44, MlDsa65, MlDsa87, SigningKey as MlDsaSigningKey};
 
 use crate::error::{SignError, SignResult};
@@ -77,10 +78,13 @@ pub enum PrivateKey {
     /// Ed25519 private key (RFC 8032).
     Ed25519(Ed25519SigningKey),
     /// ML-DSA-44 private key (FIPS 204, security category 2).
+    #[cfg(feature = "pq-experimental")]
     MlDsa44(Box<MlDsaSigningKey<MlDsa44>>),
     /// ML-DSA-65 private key (FIPS 204, security category 3).
+    #[cfg(feature = "pq-experimental")]
     MlDsa65(Box<MlDsaSigningKey<MlDsa65>>),
     /// ML-DSA-87 private key (FIPS 204, security category 5).
+    #[cfg(feature = "pq-experimental")]
     MlDsa87(Box<MlDsaSigningKey<MlDsa87>>),
 }
 
@@ -92,8 +96,11 @@ impl std::fmt::Debug for PrivateKey {
             PrivateKey::EcdsaP384(_) => f.write_str("PrivateKey::EcdsaP384([REDACTED])"),
             PrivateKey::EcdsaP521(_) => f.write_str("PrivateKey::EcdsaP521([REDACTED])"),
             PrivateKey::Ed25519(_) => f.write_str("PrivateKey::Ed25519([REDACTED])"),
+            #[cfg(feature = "pq-experimental")]
             PrivateKey::MlDsa44(_) => f.write_str("PrivateKey::MlDsa44([REDACTED])"),
+            #[cfg(feature = "pq-experimental")]
             PrivateKey::MlDsa65(_) => f.write_str("PrivateKey::MlDsa65([REDACTED])"),
+            #[cfg(feature = "pq-experimental")]
             PrivateKey::MlDsa87(_) => f.write_str("PrivateKey::MlDsa87([REDACTED])"),
         }
     }
@@ -206,18 +213,21 @@ impl SigningCredentials {
                 let signature: ed25519_dalek::Signature = signing_key.sign(data);
                 Ok(signature.to_bytes().to_vec())
             }
+            #[cfg(feature = "pq-experimental")]
             PrivateKey::MlDsa44(signing_key) => {
                 let signature: ml_dsa::Signature<MlDsa44> = signing_key.sign(data);
                 let encoded = signature.encode();
                 let bytes: &[u8] = encoded.as_slice();
                 Ok(bytes.to_vec())
             }
+            #[cfg(feature = "pq-experimental")]
             PrivateKey::MlDsa65(signing_key) => {
                 let signature: ml_dsa::Signature<MlDsa65> = signing_key.sign(data);
                 let encoded = signature.encode();
                 let bytes: &[u8] = encoded.as_slice();
                 Ok(bytes.to_vec())
             }
+            #[cfg(feature = "pq-experimental")]
             PrivateKey::MlDsa87(signing_key) => {
                 let signature: ml_dsa::Signature<MlDsa87> = signing_key.sign(data);
                 let encoded = signature.encode();
@@ -235,8 +245,11 @@ impl SigningCredentials {
             PrivateKey::EcdsaP384(_) => crate::pkcs7::SigningAlgorithm::EcdsaSha384,
             PrivateKey::EcdsaP521(_) => crate::pkcs7::SigningAlgorithm::EcdsaSha512,
             PrivateKey::Ed25519(_) => crate::pkcs7::SigningAlgorithm::Ed25519,
+            #[cfg(feature = "pq-experimental")]
             PrivateKey::MlDsa44(_) => crate::pkcs7::SigningAlgorithm::MlDsa44,
+            #[cfg(feature = "pq-experimental")]
             PrivateKey::MlDsa65(_) => crate::pkcs7::SigningAlgorithm::MlDsa65,
+            #[cfg(feature = "pq-experimental")]
             PrivateKey::MlDsa87(_) => crate::pkcs7::SigningAlgorithm::MlDsa87,
         }
     }
@@ -249,8 +262,11 @@ impl SigningCredentials {
             PrivateKey::EcdsaP384(_) => "ECDSA-P384-SHA384",
             PrivateKey::EcdsaP521(_) => "ECDSA-P521-SHA512",
             PrivateKey::Ed25519(_) => "Ed25519",
+            #[cfg(feature = "pq-experimental")]
             PrivateKey::MlDsa44(_) => "ML-DSA-44",
+            #[cfg(feature = "pq-experimental")]
             PrivateKey::MlDsa65(_) => "ML-DSA-65",
+            #[cfg(feature = "pq-experimental")]
             PrivateKey::MlDsa87(_) => "ML-DSA-87",
         }
     }
@@ -356,16 +372,27 @@ fn parse_private_key(key_der: &[u8]) -> SignResult<PrivateKey> {
         Ok(PrivateKey::EcdsaP521(ec_key))
     } else if let Ok(ed_key) = Ed25519SigningKey::from_pkcs8_der(key_der) {
         Ok(PrivateKey::Ed25519(ed_key))
-    } else if let Ok(ml44) = MlDsaSigningKey::<MlDsa44>::from_pkcs8_der(key_der) {
-        Ok(PrivateKey::MlDsa44(Box::new(ml44)))
-    } else if let Ok(ml65) = MlDsaSigningKey::<MlDsa65>::from_pkcs8_der(key_der) {
-        Ok(PrivateKey::MlDsa65(Box::new(ml65)))
-    } else if let Ok(ml87) = MlDsaSigningKey::<MlDsa87>::from_pkcs8_der(key_der) {
-        Ok(PrivateKey::MlDsa87(Box::new(ml87)))
     } else {
-        Err(SignError::Certificate(
-            "Failed to parse private key: unsupported algorithm (expected RSA, ECDSA P-256/P-384/P-521, Ed25519, or ML-DSA)".into(),
-        ))
+        #[cfg(feature = "pq-experimental")]
+        {
+            if let Ok(ml44) = MlDsaSigningKey::<MlDsa44>::from_pkcs8_der(key_der) {
+                return Ok(PrivateKey::MlDsa44(Box::new(ml44)));
+            }
+            if let Ok(ml65) = MlDsaSigningKey::<MlDsa65>::from_pkcs8_der(key_der) {
+                return Ok(PrivateKey::MlDsa65(Box::new(ml65)));
+            }
+            if let Ok(ml87) = MlDsaSigningKey::<MlDsa87>::from_pkcs8_der(key_der) {
+                return Ok(PrivateKey::MlDsa87(Box::new(ml87)));
+            }
+        }
+        let supported = if cfg!(feature = "pq-experimental") {
+            "RSA, ECDSA P-256/P-384/P-521, Ed25519, or ML-DSA"
+        } else {
+            "RSA, ECDSA P-256/P-384/P-521, or Ed25519"
+        };
+        Err(SignError::Certificate(format!(
+            "Failed to parse private key: unsupported algorithm (expected {supported})"
+        )))
     }
 }
 
