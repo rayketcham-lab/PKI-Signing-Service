@@ -101,6 +101,9 @@ zip = { workspace = true }
 # CSV output for signing summaries
 csv = { workspace = true }
 
+# Body-limit error downcasting for multipart → 413 mapping
+http-body-util = "0.1"
+
 [features]
 default = []
 

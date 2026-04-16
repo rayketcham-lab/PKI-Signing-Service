@@ -20,6 +20,38 @@ use super::ldap::UserInfo;
 use super::AppState;
 use crate::error::SignError;
 
+/// Map a multipart parsing error to an [`AppError`], preserving the
+/// HTTP status chosen by axum-extra. A `PAYLOAD_TOO_LARGE` rejection from
+/// the underlying body-limit layer surfaces as `SignError::FileTooLarge`
+/// (413), not as a generic 500 Internal. Every other multipart fault
+/// (malformed headers, aborted stream, …) is treated as internal.
+///
+/// Without this mapping, a streaming/chunked upload that trips the
+/// `DefaultBodyLimit` mid-stream would leak through as a 500, which both
+/// misleads clients and masks the body-limit enforcement from security
+/// scanners.
+fn multipart_error_to_app(err: axum_extra::extract::multipart::MultipartError) -> AppError {
+    if err.status() == axum::http::StatusCode::PAYLOAD_TOO_LARGE {
+        return AppError::new(SignError::FileTooLarge { size: 0, max: 0 });
+    }
+    // Walk the error source chain looking for a LengthLimitError.
+    // axum-extra/multer only map a narrow subset (StreamSizeExceeded, and
+    // one specific `StreamReadFailed` downcast path) to 413, which misses
+    // the case where `RequestBodyLimitLayer` trips the body mid-stream and
+    // the `http_body_util::LengthLimitError` is wrapped deeper — leaving
+    // chunked/no-CL uploads returning 500 instead of 413.
+    let mut src: Option<&(dyn std::error::Error + 'static)> = std::error::Error::source(&err);
+    while let Some(e) = src {
+        if e.downcast_ref::<http_body_util::LengthLimitError>()
+            .is_some()
+        {
+            return AppError::new(SignError::FileTooLarge { size: 0, max: 0 });
+        }
+        src = e.source();
+    }
+    AppError::new(SignError::Internal(format!("Multipart error: {err}")))
+}
+
 /// Check whether the authenticated user is authorized to use the requested certificate.
 ///
 /// When LDAP is enabled and `cert_groups` is configured, the user must belong to
@@ -156,23 +188,17 @@ pub async fn sign_file(
     while let Some(field) = multipart
         .next_field()
         .await
-        .map_err(|e| AppError::new(SignError::Internal(format!("Multipart error: {e}"))))?
+        .map_err(multipart_error_to_app)?
     {
         let field_name = field.name().unwrap_or("").to_string();
         match field_name.as_str() {
             "file" => {
                 file_name = field.file_name().map(|s| s.to_string());
-                let bytes = field
-                    .bytes()
-                    .await
-                    .map_err(|e| AppError::new(SignError::Internal(format!("Read error: {e}"))))?;
+                let bytes = field.bytes().await.map_err(multipart_error_to_app)?;
                 file_data = Some(bytes.to_vec());
             }
             "cert_type" => {
-                let text = field
-                    .text()
-                    .await
-                    .map_err(|e| AppError::new(SignError::Internal(format!("Read error: {e}"))))?;
+                let text = field.text().await.map_err(multipart_error_to_app)?;
                 if !text.is_empty() {
                     cert_type = Some(text);
                 }
@@ -407,22 +433,16 @@ pub async fn sign_detached(
     while let Some(field) = multipart
         .next_field()
         .await
-        .map_err(|e| AppError::new(SignError::Internal(format!("Multipart error: {e}"))))?
+        .map_err(multipart_error_to_app)?
     {
         match field.name() {
             Some("file") => {
                 file_name = field.file_name().map(|s| s.to_string());
-                let bytes = field
-                    .bytes()
-                    .await
-                    .map_err(|e| AppError::new(SignError::Internal(format!("Read error: {e}"))))?;
+                let bytes = field.bytes().await.map_err(multipart_error_to_app)?;
                 file_data = Some(bytes.to_vec());
             }
             Some("cert_type") => {
-                let text = field
-                    .text()
-                    .await
-                    .map_err(|e| AppError::new(SignError::Internal(format!("Read error: {e}"))))?;
+                let text = field.text().await.map_err(multipart_error_to_app)?;
                 if !text.is_empty() {
                     cert_type = Some(text);
                 }
@@ -595,14 +615,11 @@ pub async fn verify_file(
     while let Some(field) = multipart
         .next_field()
         .await
-        .map_err(|e| AppError::new(SignError::Internal(format!("Multipart error: {e}"))))?
+        .map_err(multipart_error_to_app)?
     {
         if field.name() == Some("file") {
             file_name = field.file_name().map(|s| s.to_string());
-            let bytes = field
-                .bytes()
-                .await
-                .map_err(|e| AppError::new(SignError::Internal(format!("Read error: {e}"))))?;
+            let bytes = field.bytes().await.map_err(multipart_error_to_app)?;
             file_data = Some(bytes.to_vec());
         }
     }
@@ -707,22 +724,16 @@ pub async fn verify_detached(
     while let Some(field) = multipart
         .next_field()
         .await
-        .map_err(|e| AppError::new(SignError::Internal(format!("Multipart error: {e}"))))?
+        .map_err(multipart_error_to_app)?
     {
         match field.name() {
             Some("file") => {
                 file_name = field.file_name().map(|s| s.to_string());
-                let bytes = field
-                    .bytes()
-                    .await
-                    .map_err(|e| AppError::new(SignError::Internal(format!("Read error: {e}"))))?;
+                let bytes = field.bytes().await.map_err(multipart_error_to_app)?;
                 file_data = Some(bytes.to_vec());
             }
             Some("signature") => {
-                let bytes = field
-                    .bytes()
-                    .await
-                    .map_err(|e| AppError::new(SignError::Internal(format!("Read error: {e}"))))?;
+                let bytes = field.bytes().await.map_err(multipart_error_to_app)?;
                 sig_data = Some(bytes.to_vec());
             }
             _ => {}
@@ -873,24 +884,18 @@ pub async fn sign_batch(
     while let Some(field) = multipart
         .next_field()
         .await
-        .map_err(|e| AppError::new(SignError::Internal(format!("Multipart error: {e}"))))?
+        .map_err(multipart_error_to_app)?
     {
         match field.name() {
             Some("file") => {
                 let name = field.file_name().unwrap_or("unknown").to_string();
-                let bytes = field
-                    .bytes()
-                    .await
-                    .map_err(|e| AppError::new(SignError::Internal(format!("Read error: {e}"))))?;
+                let bytes = field.bytes().await.map_err(multipart_error_to_app)?;
                 if files.len() < 10 {
                     files.push((name, bytes.to_vec()));
                 }
             }
             Some("cert_type") => {
-                let text = field
-                    .text()
-                    .await
-                    .map_err(|e| AppError::new(SignError::Internal(format!("Read error: {e}"))))?;
+                let text = field.text().await.map_err(multipart_error_to_app)?;
                 if !text.is_empty() {
                     cert_type = Some(text);
                 }
@@ -1825,6 +1830,88 @@ mod tests {
             resp.status(),
             axum::http::StatusCode::PAYLOAD_TOO_LARGE,
             "under-limit request must not be rejected as too large"
+        );
+    }
+
+    /// Oversized body WITHOUT a `Content-Length` header — the mid-stream
+    /// (chunked transfer-encoding) path must also be bounded. The Content-Length
+    /// pre-buffer rejection protects honest clients, but a lying client can
+    /// omit CL entirely and stream arbitrary bytes. `RequestBodyLimitLayer`
+    /// must close the connection / return 413 once the streamed bytes exceed
+    /// `max_upload_size`.
+    #[tokio::test]
+    async fn test_sign_oversized_no_content_length_rejected() {
+        use tower::ServiceExt as _;
+
+        let max = 1024u64;
+        let state = make_test_state_with_max(max);
+        let router = crate::web::build_router(state);
+
+        // Valid multipart body but 4× the limit, and NO Content-Length header.
+        let oversized = vec![0xAAu8; (max as usize) * 4];
+        let (ct, body) = build_multipart_with_file("big.exe", &oversized);
+
+        let request = axum::http::Request::builder()
+            .method("POST")
+            .uri("/api/v1/sign")
+            .header(axum::http::header::CONTENT_TYPE, ct)
+            // Deliberately no CONTENT_LENGTH.
+            .body(axum::body::Body::from(body))
+            .unwrap();
+
+        let resp = router.oneshot(request).await.unwrap();
+        // Without CL, the stream path must still reject oversized payloads.
+        // axum/tower-http returns 413 once the cumulative body exceeds the limit.
+        assert_eq!(
+            resp.status(),
+            axum::http::StatusCode::PAYLOAD_TOO_LARGE,
+            "streaming (no Content-Length) oversized body must return 413, got {}",
+            resp.status()
+        );
+    }
+
+    /// Exact-boundary test: a request whose Content-Length equals
+    /// `max_upload_size` must be ACCEPTED by the body-limit layer (not 413).
+    /// Off-by-one in the limit check would reject legitimate uploads sitting
+    /// on the boundary.
+    #[tokio::test]
+    async fn test_exact_boundary_content_length_not_413() {
+        use tower::ServiceExt as _;
+
+        // Pick a max large enough that a valid multipart body exists with
+        // total length exactly `max`.
+        let max = 4096u64;
+        let state = make_test_state_with_max(max);
+        let router = crate::web::build_router(state);
+
+        // Construct a multipart body whose total length equals `max`.
+        // Start with a zero-byte payload, measure wrapper overhead, then
+        // pad the payload so the full body is exactly `max` bytes.
+        let (_ct0, wrapper_only) = build_multipart_with_file("exact.bin", &[]);
+        let overhead = wrapper_only.len() as u64;
+        assert!(overhead < max, "wrapper overhead must fit within max");
+        let pad = (max - overhead) as usize;
+        let payload = vec![0x42u8; pad];
+        let (ct, body) = build_multipart_with_file("exact.bin", &payload);
+        assert_eq!(
+            body.len() as u64,
+            max,
+            "constructed body must exactly match the boundary"
+        );
+
+        let request = axum::http::Request::builder()
+            .method("POST")
+            .uri("/api/v1/sign")
+            .header(axum::http::header::CONTENT_TYPE, ct)
+            .header(axum::http::header::CONTENT_LENGTH, body.len())
+            .body(axum::body::Body::from(body))
+            .unwrap();
+
+        let resp = router.oneshot(request).await.unwrap();
+        assert_ne!(
+            resp.status(),
+            axum::http::StatusCode::PAYLOAD_TOO_LARGE,
+            "body of length == max_upload_size must not be rejected as too large"
         );
     }
 

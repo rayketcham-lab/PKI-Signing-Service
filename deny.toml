@@ -14,6 +14,13 @@ ignore = [
     { id = "RUSTSEC-2023-0071", reason = "rsa Marvin attack: oaep_decrypt exists for CMS EnvelopedData but is not network-reachable (verified by test)" },
     # ML-DSA timing sidechannel in Decompose - ml-dsa 0.0.4, awaiting upstream fix
     { id = "RUSTSEC-2025-0144", reason = "ml-dsa timing side-channel: experimental PQ support, not used in production signing yet" },
+    # ml-dsa 0.0.4 March-2026 CVE cluster — experimental PQ support,
+    # not wired into production code paths. Ignored pending upstream release.
+    # Follow-up: feature-gate ml-dsa behind pq-experimental (gh #72) so the
+    # default build has no exposure to these advisories.
+    { id = "CVE-2026-22705", reason = "ml-dsa: experimental PQ support, tracked by gh #72 feature-gate" },
+    { id = "CVE-2026-24850", reason = "ml-dsa: experimental PQ support, tracked by gh #72 feature-gate" },
+    { id = "GHSA-h37v-hp6w-2pp8", reason = "ml-dsa: experimental PQ support, tracked by gh #72 feature-gate" },
     # rustls-pemfile unmaintained — transitive dep via rustls/reqwest, migrating to rustls-pem
     { id = "RUSTSEC-2025-0134", reason = "rustls-pemfile: unmaintained, transitive via reqwest/rustls, no security impact" },
 ]

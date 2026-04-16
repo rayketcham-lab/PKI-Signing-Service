@@ -281,10 +281,26 @@ jobs:
           git config --unset-all http.https://github.com/.extraheader || true
           git config --global --unset-all http.https://github.com/.extraheader || true
           for attempt in 1 2 3; do
-            cargo audit --ignore RUSTSEC-2023-0071 --ignore RUSTSEC-2025-0144 --ignore RUSTSEC-2025-0134 && break
+            cargo audit --ignore RUSTSEC-2023-0071 --ignore RUSTSEC-2025-0144 --ignore RUSTSEC-2025-0134 --ignore CVE-2026-22705 --ignore CVE-2026-24850 --ignore GHSA-h37v-hp6w-2pp8 && break
             echo "Attempt $attempt failed, retrying..."
             sleep 5
           done
+
+  yaml-lint:
+    name: YAML lint (workflows + dependabot)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4.3.1
+      - name: Install yamllint
+        run: |
+          python3 -m pip install --user 'yamllint==1.35.1'
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Lint workflow + dependabot configs
+        run: |
+          yamllint -d '{extends: relaxed, rules: {line-length: disable}}' \
+            .github/workflows \
+            .github/dependabot.yml
 
   cargo-deny:
     name: Dependency audit (cargo-deny)

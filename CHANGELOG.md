@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+- **Multipart streaming body-limit now returns 413** — uploads without a `Content-Length` header (chunked transfer-encoding) that exceed `max_upload_size` are rejected with `413 Payload Too Large` instead of `500 Internal Server Error`. The fix walks the multipart error source chain for `http_body_util::LengthLimitError` and maps it to `SignError::FileTooLarge`, closing the 500-leakage gap the pre-buffer layer left behind.
+- **Release ci-gate now runs cargo-audit + cargo-deny** — vulnerable dependencies can no longer ship via the release workflow, even if admin-bypass is used on `main`.
+- **Cosign signing failures now fail the release** — removed `|| echo` fallback on `gh release upload` and added a post-sign presence check for every `.sig`/`.cosign-bundle`. v0.5.8 shipped without supply-chain signatures because of this silent-fail; regression guard added.
+- **ml-dsa CVE cluster acknowledged in deny.toml + cargo audit** — CVE-2026-22705, CVE-2026-24850, GHSA-h37v-hp6w-2pp8 explicitly ignored with tracker link; no CI surprise when advisory DB catches up.
+- **rustls-webpki CVE floor regression test** — supply-chain test asserts locked version >= 0.103.12.
+
+### Fixed
+- `.github/dependabot.yml` `rand` ignore rule used unsupported `versions: ["0.8.x"]` syntax (silent no-op); replaced with `update-types: [version-update:semver-major]`.
+- README release-asset URLs drift guard — integration test parses README install block and asserts every `pki-sign-*` asset name is actually produced by `release.yml`.
+
+### Added
+- `yaml-lint` CI job covering `.github/workflows` and `.github/dependabot.yml`.
+- `test_sign_oversized_no_content_length_rejected` — chunked/no-CL path 413 regression.
+- `test_exact_boundary_content_length_not_413` — off-by-one regression on `body == max_upload_size`.
+- `tests/supply_chain_regression.rs` — Cargo.lock version-floor assertions.
+- `tests/release_assets.rs` — README/release.yml asset-name drift guard.
+
 ## [0.5.8] - 2026-04-16
 
 ### Security

@@ -38,6 +38,14 @@ jobs:
         run: cargo clippy --all-targets --workspace -- -D warnings
       - name: Test
         run: cargo test --workspace
+      - name: Install cargo-audit
+        run: cargo install --locked cargo-audit
+      - name: cargo audit (RustSec advisories)
+        run: cargo audit --deny warnings
+      - name: Install cargo-deny
+        run: cargo install --locked cargo-deny
+      - name: cargo deny (advisories, licenses, bans, sources)
+        run: cargo deny check advisories licenses bans sources
 
   build-linux:
     name: Build Linux (glibc + musl)
@@ -164,7 +172,9 @@ jobs:
       - name: Sign release artifacts with cosign (#62)
         env:
           TAG: ${{ steps.tag.outputs.tag }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          set -euo pipefail
           for f in artifacts/linux-binaries/pki-sign-* artifacts/windows-binaries/pki-sign-*; do
             case "$f" in *.sha256) continue ;; esac
             echo "Signing $f..."
@@ -173,10 +183,16 @@ jobs:
               --bundle "${f}.cosign-bundle" \
               --output-signature "${f}.sig"
           done
-          # Upload signatures to the release
+          for f in artifacts/linux-binaries/pki-sign-* artifacts/windows-binaries/pki-sign-*; do
+            case "$f" in *.sha256|*.sig|*.cosign-bundle) continue ;; esac
+            if [[ ! -f "${f}.sig" || ! -f "${f}.cosign-bundle" ]]; then
+              echo "ERROR: missing signature or bundle for $f" >&2
+              exit 1
+            fi
+          done
           gh release upload "$TAG" \
             artifacts/linux-binaries/*.sig \
             artifacts/linux-binaries/*.cosign-bundle \
             artifacts/windows-binaries/*.sig \
             artifacts/windows-binaries/*.cosign-bundle \
-            --clobber || echo "WARN: Signature upload failed (cosign may not be configured)"
+            --clobber
