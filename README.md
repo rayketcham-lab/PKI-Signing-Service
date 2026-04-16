@@ -51,6 +51,7 @@ No OpenSSL. No `signtool.exe`. No external dependencies. One binary.
 - [Architecture](#architecture)
 - [Security](#security)
 - [Building from Source](#building-from-source)
+- [Changelog](#changelog)
 - [License](#license)
 
 ## Features
@@ -80,13 +81,25 @@ See the [interactive demos](https://rayketcham-lab.github.io/PKI-Signing-Service
 
 ### Install
 
-Download the latest release binary:
+Download the latest release binary for your platform from the [releases page](https://github.com/rayketcham-lab/PKI-Signing-Service/releases/latest):
 
 ```bash
-curl -LO https://github.com/rayketcham-lab/PKI-Signing-Service/releases/latest/download/pki-sign
-chmod +x pki-sign
-sudo mv pki-sign /usr/local/bin/
+# Linux (glibc-linked, smaller)
+curl -LO https://github.com/rayketcham-lab/PKI-Signing-Service/releases/latest/download/pki-sign-linux-x86_64
+curl -LO https://github.com/rayketcham-lab/PKI-Signing-Service/releases/latest/download/pki-sign-linux-x86_64.sha256
+sha256sum -c pki-sign-linux-x86_64.sha256
+chmod +x pki-sign-linux-x86_64
+sudo mv pki-sign-linux-x86_64 /usr/local/bin/pki-sign
+
+# Linux (static musl — zero runtime dependencies, portable across distros)
+curl -LO https://github.com/rayketcham-lab/PKI-Signing-Service/releases/latest/download/pki-sign-linux-x86_64-static
+curl -LO https://github.com/rayketcham-lab/PKI-Signing-Service/releases/latest/download/pki-sign-linux-x86_64-static.sha256
+sha256sum -c pki-sign-linux-x86_64-static.sha256
+chmod +x pki-sign-linux-x86_64-static
+sudo mv pki-sign-linux-x86_64-static /usr/local/bin/pki-sign
 ```
+
+Windows: download [`pki-sign-windows-x86_64.exe`](https://github.com/rayketcham-lab/PKI-Signing-Service/releases/latest) and verify against the accompanying `.sha256`.
 
 Or build from source:
 
@@ -488,6 +501,10 @@ WantedBy=multi-user.target
 ```
 
 ---
+
+## Changelog
+
+See [CHANGELOG.md](CHANGELOG.md) for release history. Vulnerability reports: [SECURITY.md](SECURITY.md).
 
 ## License
 
