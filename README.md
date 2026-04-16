@@ -51,6 +51,8 @@ No OpenSSL. No `signtool.exe`. No external dependencies. One binary.
 - [Architecture](#architecture)
 - [Security](#security)
 - [Building from Source](#building-from-source)
+- [Roadmap](#roadmap)
+- [Contributing](#contributing)
 - [Changelog](#changelog)
 - [License](#license)
 
@@ -68,7 +70,10 @@ No OpenSSL. No `signtool.exe`. No external dependencies. One binary.
 - **Built-in TSA server** --- RFC 3161 Time-Stamp Authority on port 3318
 - **LDAP authentication** --- Header-based auth via reverse proxy
 - **Certificate management** --- Admin API for hot-reload, listing, and rotation
-- **Audit logging** --- Every signing operation logged with request ID, hash, and duration
+- **Audit logging** --- Every signing operation logged with request ID, hash, client IP, and duration
+- **Rate limiting** --- Per-endpoint and per-IP limits on the web service
+- **CIDR-aware reverse-proxy trust** --- Only whitelisted CIDRs may set `X-Forwarded-For` / `X-Real-IP`
+- **Cosign-signed releases** --- Every release artifact ships with `.sig` + `.cosign-bundle` for supply-chain verification
 - **Evidence Record Syntax** --- RFC 4998 long-term archive timestamps
 - **Static binary** --- `x86_64-unknown-linux-musl` target, zero runtime dependencies
 
@@ -100,6 +105,25 @@ sudo mv pki-sign-linux-x86_64-static /usr/local/bin/pki-sign
 ```
 
 Windows: download [`pki-sign-windows-x86_64.exe`](https://github.com/rayketcham-lab/PKI-Signing-Service/releases/latest) and verify against the accompanying `.sha256`.
+
+<details>
+<summary><strong>Verify release signatures (cosign)</strong></summary>
+
+Every release binary is signed with [cosign](https://github.com/sigstore/cosign) keyless signing. The matching `.sig` and `.cosign-bundle` are uploaded next to each artifact.
+
+```bash
+# Download binary + cosign bundle
+curl -LO https://github.com/rayketcham-lab/PKI-Signing-Service/releases/latest/download/pki-sign-linux-x86_64-static
+curl -LO https://github.com/rayketcham-lab/PKI-Signing-Service/releases/latest/download/pki-sign-linux-x86_64-static.cosign-bundle
+
+# Verify the binary was built + signed by our release workflow
+cosign verify-blob pki-sign-linux-x86_64-static \
+  --bundle pki-sign-linux-x86_64-static.cosign-bundle \
+  --certificate-identity-regexp 'https://github.com/rayketcham-lab/PKI-Signing-Service/.*' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+```
+
+</details>
 
 Or build from source:
 
@@ -444,10 +468,14 @@ COMMANDS:
 - **No OpenSSL** --- Pure Rust crypto stack (`rsa`, `p256`, `p384`, `p521`, `ed25519-dalek`, `ml-dsa`, `sha2`, `aes-gcm`). TLS via `rustls` with `aws-lc-rs` backend.
 - **OpenSSL banned** --- `cargo-deny` blocks `openssl`, `openssl-sys`, and `native-tls` crate usage.
 - **Key zeroization** --- Private keys wrapped in `Zeroizing<>` for secure memory cleanup.
-- **Audit trail** --- Every sign/verify operation logged with request ID, file hash, signer, timestamp status, and duration.
+- **Audit trail** --- Every sign/verify operation logged with request ID, file hash, signer, client IP, timestamp status, and duration.
 - **Auth modes** --- None (dev), LDAP header pass-through, mTLS, API key.
-- **Security headers** --- Applied via middleware on all responses.
-- **CI hardening** --- `cargo-audit` + `cargo-deny` on every push. Pinned action SHAs.
+- **Security headers + CSP** --- Applied via middleware on all responses; fail-closed auth middleware.
+- **Body-limit enforcement** --- Oversized uploads rejected with `413` before any bytes are buffered (Content-Length + chunked transfer-encoding both covered).
+- **Rate limiting** --- Per-endpoint and per-IP, with CIDR-aware reverse-proxy trust for `X-Forwarded-For`.
+- **Supply-chain signing** --- Release artifacts signed with cosign (keyless / GitHub OIDC). Regression test asserts `.sig` + `.cosign-bundle` ship for every binary.
+- **CI hardening** --- `cargo-audit` + `cargo-deny` on every push *and* the release gate. YAML lint on workflows + dependabot config. All GitHub Action versions pinned to commit SHAs.
+- **Secret scanning** --- Pre-commit hook + CI gate block committed credentials.
 - **Static binary** --- musl target for minimal attack surface in production.
 
 > [!IMPORTANT]
@@ -501,6 +529,39 @@ WantedBy=multi-user.target
 ```
 
 ---
+
+## Roadmap
+
+The project is stable for Authenticode, detached CMS, and RFC 3161 signing workloads. Ongoing work is tracked in [GitHub issues](https://github.com/rayketcham-lab/PKI-Signing-Service/issues); the milestones below capture the directional bets.
+
+### v0.6 --- PQ-experimental opt-in + structural clean-up
+
+- **Feature-gate ML-DSA behind `pq-experimental`** ([#72](https://github.com/rayketcham-lab/PKI-Signing-Service/issues/72)) --- default builds drop the `ml-dsa` / `slh-dsa` dependencies entirely. Operators who want PQC opt in explicitly with `cargo build --features pq-experimental`.
+- **Decompose `signer.rs` / `verifier.rs` monoliths** ([#55](https://github.com/rayketcham-lab/PKI-Signing-Service/issues/55)) --- extract PFX loading and cert-validation helpers into dedicated modules without public-API churn.
+- **ML-DSA timing-side-channel tracking** ([#42](https://github.com/rayketcham-lab/PKI-Signing-Service/issues/42)) --- follow the upstream `ml-dsa` 0.0.4 → stable release and drop the `cargo-audit` ignores as soon as a constant-time Decompose lands.
+
+### v0.7 --- Hybrid / composite certificates
+
+- **Dual-sign PKCS#7** ([#22](https://github.com/rayketcham-lab/PKI-Signing-Service/issues/22) phase 2) --- same PKCS#7 envelope carries an RSA or ECDSA signature *and* an ML-DSA counter-signature, so a downstream verifier with either capability can validate.
+- **Composite signatures (NIST SP 800-227)** ([#22](https://github.com/rayketcham-lab/PKI-Signing-Service/issues/22) phase 3) --- single certificate carrying both a classical and a PQ key; tracks the NIST composite-signature spec as it finalizes.
+
+### v1.0 --- Production freeze
+
+- Stable REST API surface with semver guarantees on `/api/v1/*`
+- CAB/MSI Authenticode interop parity with `osslsigncode` / `signtool` (current gaps tracked in [#45](https://github.com/rayketcham-lab/PKI-Signing-Service/issues/45), [#46](https://github.com/rayketcham-lab/PKI-Signing-Service/issues/46))
+- SLSA provenance attestations alongside the existing cosign signatures
+- Documented HSM / KMS key-backend interfaces (no private-key-on-disk requirement)
+
+Want to pull something forward? File an issue with the `roadmap` label or comment on an existing one.
+
+## Contributing
+
+Issues and PRs welcome. See [SECURITY.md](SECURITY.md) for vulnerability reports (please don't file those as public issues).
+
+- **Triage labels**: `security` (highest priority), `bug`, `enhancement`, `testing`, `documentation`, `future`
+- **Before opening a PR**: `cargo fmt --all --check`, `cargo clippy --all-targets --workspace -- -D warnings`, `cargo test --workspace` must all pass
+- **Conventional commits**: prefixes `feat:`, `fix:`, `refactor:`, `test:`, `docs:`, `ci:`, `security:`
+- **Good-first-issue candidates**: browse [open issues labeled `documentation` or `testing`](https://github.com/rayketcham-lab/PKI-Signing-Service/issues?q=is%3Aopen+label%3Adocumentation%2Ctesting)
 
 ## Changelog
 
