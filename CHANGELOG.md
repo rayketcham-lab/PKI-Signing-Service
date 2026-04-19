@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.11] - 2026-04-19
+
+### Fixed
+- **rustfmt violation in `tests/release_assets.rs`** — v0.5.10 CI Gate failed the Format check because the `has_existence_guard` line was split manually; rustfmt wants it on one line. Reverts to single-line form.
+
 ## [0.5.10] - 2026-04-19
 
 ### Fixed

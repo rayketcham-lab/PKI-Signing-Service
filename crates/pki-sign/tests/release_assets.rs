@@ -139,8 +139,7 @@ fn cosign_guard_loop_prevents_silent_sig_fail() {
         "release.yml must invoke `cosign sign-blob` to produce signatures"
     );
 
-    let has_existence_guard =
-        workflow.contains(r#"if [[ ! -f "${f}.cosign-bundle" ]]"#);
+    let has_existence_guard = workflow.contains(r#"if [[ ! -f "${f}.cosign-bundle" ]]"#);
     assert!(
         has_existence_guard,
         "release.yml must verify `${{f}}.cosign-bundle` exists after signing \
