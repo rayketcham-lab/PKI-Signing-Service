@@ -65,6 +65,11 @@ impl FileType {
 /// Supported private key types for code signing.
 ///
 /// `Debug` is manually implemented to avoid leaking key material.
+///
+/// Marked `#[non_exhaustive]` so future key types (hybrid/composite,
+/// additional PQ schemes) can be added behind feature flags without forcing
+/// downstream consumers to rewrite every match expression.
+#[non_exhaustive]
 pub enum PrivateKey {
     /// RSA private key (2048, 3072, or 4096 bit).
     /// Boxed to reduce enum size disparity with ECDSA variants.

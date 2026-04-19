@@ -117,3 +117,40 @@ fn readme_asset_names_match_release_workflow() {
         );
     }
 }
+
+/// Regression test for gh #69: cosign sign-blob in release.yml previously
+/// silently succeeded even when no signatures were produced because the loop
+/// was not guarded with `set -e` + an existence check. This test asserts both
+/// guards remain wired so a revert would fail CI instead of shipping an
+/// unsigned release.
+#[test]
+fn cosign_guard_loop_prevents_silent_sig_fail() {
+    let workflow = std::fs::read_to_string(repo_root_file(".github/workflows/release.yml"))
+        .expect("read release.yml");
+
+    assert!(
+        workflow.contains("set -euo pipefail"),
+        "release.yml cosign step must start with `set -euo pipefail` so sign-blob \
+         failures abort the job (gh #69 regression)"
+    );
+
+    assert!(
+        workflow.contains("cosign sign-blob"),
+        "release.yml must invoke `cosign sign-blob` to produce signatures"
+    );
+
+    let has_existence_guard = workflow
+        .contains(r#"if [[ ! -f "${f}.sig" || ! -f "${f}.cosign-bundle" ]]"#)
+        || workflow.contains(r#"if [[ ! -f "${f}.cosign-bundle" || ! -f "${f}.sig" ]]"#);
+    assert!(
+        has_existence_guard,
+        "release.yml must verify `${{f}}.sig` and `${{f}}.cosign-bundle` exist after \
+         signing (gh #69 regression — prevents silently shipping unsigned assets)"
+    );
+
+    assert!(
+        workflow.contains("missing signature or bundle") && workflow.contains("exit 1"),
+        "release.yml's cosign guard loop must `exit 1` with a clear error when \
+         a signature or bundle is missing (gh #69 regression)"
+    );
+}

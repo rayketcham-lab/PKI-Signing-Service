@@ -12,14 +12,22 @@ ignore = [
     # key transport, but is NOT reachable from any web handler (verified by security regression
     # test test_security_regression_oaep_decrypt_not_web_reachable). No upstream fix available.
     { id = "RUSTSEC-2023-0071", reason = "rsa Marvin attack: oaep_decrypt exists for CMS EnvelopedData but is not network-reachable (verified by test)" },
-    # ml-dsa is now feature-gated behind `pq-experimental` (gh #72) — default
-    # builds do not resolve the crate, so RUSTSEC-2025-0144, CVE-2026-22705,
-    # CVE-2026-24850, and GHSA-h37v-hp6w-2pp8 no longer apply to the default
-    # dep graph. The supply-chain regression test
-    # (tests/pq_feature_gate.rs::default_build_cargo_tree_omits_ml_dsa) asserts
-    # this invariant at CI time.
+    # ml-dsa is now feature-gated behind `pq-experimental` (gh #72). Default
+    # builds do not resolve the crate (asserted by
+    # tests/pq_feature_gate.rs::default_build_cargo_tree_omits_ml_dsa), but
+    # Cargo.lock still pins it for the opt-in feature, so cargo-audit still
+    # flags the advisory ID. Ignored here to keep cargo-deny + cargo-audit
+    # aligned; the CI --ignore flags use the same ID.
+    { id = "RUSTSEC-2025-0144", reason = "ml-dsa timing side-channel: feature-gated behind pq-experimental, absent from default dep graph (verified by pq_feature_gate.rs)" },
     # rustls-pemfile unmaintained — transitive dep via rustls/reqwest, migrating to rustls-pem
     { id = "RUSTSEC-2025-0134", reason = "rustls-pemfile: unmaintained, transitive via reqwest/rustls, no security impact" },
+    # rand 0.8/0.9/0.10 `unsound_with_custom_logger`: only reachable if the
+    # application registers a custom `rand::rng` logger with a faulty impl.
+    # pki-sign never installs a custom rng logger — the `rand` crate is only
+    # used via `ring`/`rsa`/`quinn` defaults. Ignored in the release ci-gate
+    # where `cargo audit --deny warnings` would otherwise escalate this to a
+    # failure.
+    { id = "RUSTSEC-2026-0097", reason = "rand unsound-with-custom-logger: no custom logger registered; transitive via rsa/quinn/p12-keystore" },
 ]
 
 # ============================================================================

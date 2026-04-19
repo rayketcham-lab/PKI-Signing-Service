@@ -88,7 +88,12 @@ impl DigestAlgorithm {
 ///
 /// This is required to populate the CMSAlgorithmProtection signed attribute
 /// (RFC 8933) with the correct signatureAlgorithm value.
+///
+/// Marked `#[non_exhaustive]` so future additions (hybrid/composite
+/// identifiers, post-quantum schemes behind feature flags) can land without
+/// forcing downstream consumers to rewrite match expressions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum SigningAlgorithm {
     /// RSA PKCS#1 v1.5 with SHA-256 (sha256WithRSAEncryption).
     RsaSha256,
@@ -120,12 +125,21 @@ pub enum SigningAlgorithm {
     #[cfg(feature = "pq-experimental")]
     MlDsa87,
     /// SLH-DSA-SHA2-128s (FIPS 205, RFC 9909 — pure scheme, SHA-256 for CMS digest).
+    ///
+    /// CMS-builder-level support only: the algorithm identifier is emitted in
+    /// the CMS structure, but `PrivateKey` does not wrap SLH-DSA keys. Callers
+    /// must provide the signature bytes via [`CmsSignerInfo`]'s external
+    /// signing callback (see [`SignedDataBuilder::build`]).
     #[cfg(feature = "pq-experimental")]
     SlhDsaSha2128s,
     /// SLH-DSA-SHA2-192s (FIPS 205, RFC 9909 — pure scheme, SHA-512 for CMS digest).
+    ///
+    /// CMS-builder-level support only; see [`SigningAlgorithm::SlhDsaSha2128s`].
     #[cfg(feature = "pq-experimental")]
     SlhDsaSha2192s,
     /// SLH-DSA-SHA2-256s (FIPS 205, RFC 9909 — pure scheme, SHA-512 for CMS digest).
+    ///
+    /// CMS-builder-level support only; see [`SigningAlgorithm::SlhDsaSha2128s`].
     #[cfg(feature = "pq-experimental")]
     SlhDsaSha2256s,
 }

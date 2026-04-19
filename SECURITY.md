@@ -44,6 +44,33 @@ You should receive an acknowledgment within 48 hours. We aim to release a fix wi
 - SHA-1: allowed only for legacy PKCS#12/PFX compatibility, banned for new signatures
 - TLS: rustls with aws-lc-rs backend (no OpenSSL)
 
+## Release Signing & Verification
+
+Every release artifact is signed with [cosign](https://github.com/sigstore/cosign)
+keyless signing, driven by the `release.yml` workflow using GitHub Actions OIDC.
+Each binary ships with a `.sig` (detached signature) and `.cosign-bundle`
+(signing certificate + transparency-log entry) alongside the binary in the
+GitHub release.
+
+**Verify the canonical signer identity before installing:**
+
+```bash
+cosign verify-blob pki-sign-linux-x86_64-static \
+  --bundle pki-sign-linux-x86_64-static.cosign-bundle \
+  --certificate-identity-regexp 'https://github.com/rayketcham-lab/PKI-Signing-Service/.*' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+```
+
+| Field | Expected value |
+|-------|----------------|
+| `--certificate-oidc-issuer` | `https://token.actions.githubusercontent.com` (GitHub Actions OIDC — anything else means the artifact was NOT signed by this repo's release workflow) |
+| `--certificate-identity-regexp` | `https://github.com/rayketcham-lab/PKI-Signing-Service/.*` (matches `.github/workflows/release.yml@refs/tags/v*` — use the pinned `--certificate-identity` form to require an exact tag) |
+| Signing workflow | `.github/workflows/release.yml`, `release` job, `Sign release artifacts with cosign (#62)` step |
+| Guard against silent failure | Release job contains an explicit `if [[ ! -f "${f}.sig" || ! -f "${f}.cosign-bundle" ]]; then exit 1` loop (gh #69) — enforced by `cosign_guard_loop_prevents_silent_sig_fail` integration test |
+
+Any verification failure — missing bundle, mismatched identity, or unknown OIDC
+issuer — means the artifact must be rejected. Do not install unverified binaries.
+
 ## Banned Dependencies
 
 The following crates are blocked by `cargo-deny`:

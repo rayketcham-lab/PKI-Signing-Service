@@ -102,7 +102,9 @@ fn check_cert_authorization(
 /// Sanitize a user-supplied filename for use in Content-Disposition headers.
 ///
 /// Strips directory separators, control characters, quotes, and newlines
-/// to prevent header injection. Truncates to 255 bytes.
+/// to prevent header injection. Truncates to 255 bytes, preserving UTF-8
+/// char boundaries (truncating mid-codepoint would panic the underlying
+/// slice operation and would also produce invalid UTF-8).
 fn sanitize_filename(name: &str) -> String {
     let basename = name.rsplit(['/', '\\']).next().unwrap_or(name);
     let sanitized: String = basename
@@ -110,7 +112,13 @@ fn sanitize_filename(name: &str) -> String {
         .filter(|c| !c.is_control() && *c != '"' && *c != '\'' && *c != ';')
         .collect();
     if sanitized.len() > 255 {
-        sanitized[..255].to_string()
+        // Walk back from byte 255 to the nearest char boundary so we never
+        // split a multi-byte UTF-8 codepoint.
+        let mut end = 255;
+        while !sanitized.is_char_boundary(end) {
+            end -= 1;
+        }
+        sanitized[..end].to_string()
     } else if sanitized.is_empty() {
         "download".to_string()
     } else {
@@ -1501,6 +1509,96 @@ pub async fn fallback() -> impl IntoResponse {
 mod tests {
     use super::*;
     use crate::config::{LdapConfig, SignConfig};
+
+    // ─── sanitize_filename unit tests ────────────────────────────────────────
+
+    #[test]
+    fn test_sanitize_filename_passes_ascii_basename() {
+        assert_eq!(sanitize_filename("foo.exe"), "foo.exe");
+    }
+
+    #[test]
+    fn test_sanitize_filename_strips_directory_separators() {
+        assert_eq!(sanitize_filename("../../etc/passwd"), "passwd");
+        assert_eq!(
+            sanitize_filename("C:\\Windows\\System32\\evil.dll"),
+            "evil.dll"
+        );
+    }
+
+    #[test]
+    fn test_sanitize_filename_strips_header_injection() {
+        // CRLF and NUL must be stripped to prevent Content-Disposition header
+        // splitting / injection. The security property is "cannot break out of
+        // the filename token", not "cannot contain colons" — colons inside a
+        // quoted filename are harmless after CRLF is gone.
+        let poisoned = "file\r\nX-Evil: attacker\r\n\r\n\x00.exe";
+        let s = sanitize_filename(poisoned);
+        assert!(!s.contains('\r'), "CR must be stripped: {s:?}");
+        assert!(!s.contains('\n'), "LF must be stripped: {s:?}");
+        assert!(!s.contains('\0'), "NUL must be stripped: {s:?}");
+    }
+
+    #[test]
+    fn test_sanitize_filename_strips_quotes_and_semicolons() {
+        let s = sanitize_filename(r#"a"b'c;d.txt"#);
+        assert_eq!(s, "abcd.txt");
+    }
+
+    #[test]
+    fn test_sanitize_filename_all_control_chars_yields_download() {
+        assert_eq!(sanitize_filename("\x00\x01\x02\x1f"), "download");
+    }
+
+    #[test]
+    fn test_sanitize_filename_preserves_utf8() {
+        // Non-ASCII chars that are not control / quote / semicolon must survive.
+        let s = sanitize_filename("signature-αβγ.txt");
+        assert_eq!(s, "signature-αβγ.txt");
+    }
+
+    #[test]
+    fn test_sanitize_filename_utf8_boundary_does_not_panic() {
+        // Craft a filename whose sanitized byte length exceeds 255 AND whose
+        // byte-255 position falls *inside* a multi-byte UTF-8 codepoint.
+        // Previous impl used `&sanitized[..255]` which panics on a non-ASCII
+        // char boundary. This test locks in a panic-free truncation path.
+        //
+        // 'α' is 2 bytes (0xCE 0xB1). Build 200 ASCII bytes then append 30 'α'
+        // chars (60 bytes) → 260 bytes total, and byte 255 lands inside the
+        // last α's second byte (boundary check: 200 + 27*2 = 254, byte 255 is
+        // the first byte of char 28 → still on a boundary; use 199 ASCII +
+        // 31 α = 199+62=261 bytes, with byte 255 = first byte of char (255-199)/2
+        // inside alpha #28 → actually byte 255 = pos after 199 ASCII + 56 = α#29
+        // start; shift by one so byte 255 lands inside not on boundary).
+        let mut raw = String::from_iter(std::iter::repeat_n('a', 200));
+        raw.push_str(&"α".repeat(40)); // 200 + 80 = 280 bytes
+                                       // sanity: len > 255 and byte 255 must NOT be a char boundary.
+        assert!(raw.len() > 255);
+        assert!(
+            !raw.is_char_boundary(255),
+            "test precondition: byte 255 must fall inside a multi-byte char; \
+             raw.len()={} is_boundary(255)={}",
+            raw.len(),
+            raw.is_char_boundary(255),
+        );
+        // Must not panic, must return valid UTF-8 ≤ 255 bytes.
+        let out = sanitize_filename(&raw);
+        assert!(
+            out.len() <= 255,
+            "truncated len must be ≤ 255, got {}",
+            out.len()
+        );
+        assert!(
+            out.is_char_boundary(out.len()),
+            "output must end on a char boundary"
+        );
+    }
+
+    #[test]
+    fn test_sanitize_filename_empty_input_yields_download() {
+        assert_eq!(sanitize_filename(""), "download");
+    }
 
     // ─── E2E HTTP tests ──────────────────────────────────────────────────────
 

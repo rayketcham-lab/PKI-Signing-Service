@@ -106,6 +106,20 @@ pub struct SignConfig {
     /// resource exhaustion. Signing is CPU-intensive; this protects the server.
     #[serde(default = "default_rate_limit")]
     pub rate_limit_rps: u64,
+
+    /// CSRF Origin allowlist for state-changing requests (gh #19).
+    ///
+    /// When a browser issues a cross-site POST/PUT/PATCH/DELETE, it sends an
+    /// `Origin` header. If this list is non-empty, the `Origin` value MUST
+    /// appear in it exactly (scheme + host + port, trailing slash stripped) or
+    /// the request is rejected. When this list is empty, the middleware falls
+    /// back to a same-origin check against the request's `Host` header, which
+    /// keeps deployments behind a known reverse proxy secure without extra
+    /// configuration. Requests with no `Origin` header (non-browser CLIs,
+    /// curl, scripts) are allowed through — the protection targets the
+    /// CSRF-from-browser threat model.
+    #[serde(default)]
+    pub trusted_origins: Vec<String>,
 }
 
 /// Signing certificate configuration.
@@ -277,6 +291,7 @@ impl Default for SignConfig {
             dev_mode: false,
             audit_required: false,
             rate_limit_rps: default_rate_limit(),
+            trusted_origins: Vec::new(),
         }
     }
 }

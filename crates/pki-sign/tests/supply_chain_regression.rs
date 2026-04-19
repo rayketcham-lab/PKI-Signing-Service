@@ -37,13 +37,31 @@ fn locked_version(lock: &str, crate_name: &str) -> Option<String> {
 }
 
 /// Parse a "major.minor.patch" string into a comparable tuple.
+///
+/// Fails loudly on malformed input: a silent `unwrap_or(0)` here would let a
+/// version string like "0.103.x-beta" quietly become `(0, 0, 0)` and always
+/// compare *below* the floor, which would mask a real downgrade behind a
+/// spurious test failure instead of revealing it.
 fn parse_semver(v: &str) -> (u64, u64, u64) {
-    let mut parts = v.split('.').map(|p| p.parse::<u64>().unwrap_or(0));
-    (
-        parts.next().unwrap_or(0),
-        parts.next().unwrap_or(0),
-        parts.next().unwrap_or(0),
-    )
+    let mut parts = v.split('.').map(|p| {
+        p.split(|c: char| !c.is_ascii_digit())
+            .next()
+            .unwrap_or("")
+            .parse::<u64>()
+            .unwrap_or_else(|_| {
+                panic!("supply-chain regression: cannot parse version component `{p}` in `{v}`")
+            })
+    });
+    let major = parts
+        .next()
+        .unwrap_or_else(|| panic!("supply-chain regression: version `{v}` missing major"));
+    let minor = parts
+        .next()
+        .unwrap_or_else(|| panic!("supply-chain regression: version `{v}` missing minor"));
+    let patch = parts
+        .next()
+        .unwrap_or_else(|| panic!("supply-chain regression: version `{v}` missing patch"));
+    (major, minor, patch)
 }
 
 /// rustls-webpki must stay at or above the version that patches the
@@ -63,5 +81,46 @@ fn rustls_webpki_has_cve_patch() {
         got >= min,
         "rustls-webpki {version} is below the CVE-patched floor 0.103.12 — \
          upgrading to a fixed version is required before shipping"
+    );
+}
+
+/// `ring` is the hash / signature / RNG primitive behind rustls, Authenticode,
+/// and CMS signing. 0.17.14 is the first release to incorporate the upstream
+/// fixes for the 2025 constant-time / aarch64 regressions; any downgrade below
+/// that floor would silently bring those back.
+#[test]
+fn ring_at_or_above_security_floor() {
+    let lock_path = workspace_lockfile();
+    let lock = std::fs::read_to_string(&lock_path).expect("read Cargo.lock");
+    let version =
+        locked_version(&lock, "ring").expect("ring must appear in the workspace dependency graph");
+
+    let min = (0, 17, 14);
+    let got = parse_semver(&version);
+    assert!(
+        got >= min,
+        "ring {version} is below the security floor 0.17.14 — a downgrade \
+         would reintroduce the 2025 constant-time / aarch64 fixes regressions"
+    );
+}
+
+/// `rustls` anchors TLS for the HTTPS listener and every outbound TSA/OCSP
+/// call. 0.23.37 is the baseline that pulls in the fixed rustls-webpki and
+/// matches the currently-audited posture; a downgrade would silently revert
+/// both the webpki CVE patches and the rustls-level hardening that ships
+/// alongside.
+#[test]
+fn rustls_at_or_above_security_floor() {
+    let lock_path = workspace_lockfile();
+    let lock = std::fs::read_to_string(&lock_path).expect("read Cargo.lock");
+    let version = locked_version(&lock, "rustls")
+        .expect("rustls must appear in the workspace dependency graph");
+
+    let min = (0, 23, 37);
+    let got = parse_semver(&version);
+    assert!(
+        got >= min,
+        "rustls {version} is below the security floor 0.23.37 — a downgrade \
+         would pair with an older rustls-webpki and revert audited hardening"
     );
 }

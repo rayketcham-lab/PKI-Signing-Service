@@ -132,6 +132,11 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route_layer(axum_middleware::from_fn_with_state(
             state.clone(),
             middleware::admin_auth_middleware,
+        ))
+        // gh #19: CSRF Origin guard on state-changing admin routes.
+        .route_layer(axum_middleware::from_fn_with_state(
+            state.clone(),
+            middleware::csrf_origin_middleware,
         ));
 
     // Signing routes with concurrency limiting (#54)
@@ -161,6 +166,11 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route_layer(axum_middleware::from_fn_with_state(
             state.clone(),
             middleware::ldap_auth_middleware,
+        ))
+        // gh #19: CSRF Origin guard on every state-changing API route.
+        .route_layer(axum_middleware::from_fn_with_state(
+            state.clone(),
+            middleware::csrf_origin_middleware,
         ));
 
     // Assemble the full router

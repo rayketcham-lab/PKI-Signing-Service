@@ -122,6 +122,33 @@ jobs:
         shell: powershell
         run: cargo test --workspace
 
+  test-pq-experimental:
+    name: Test (pq-experimental)
+    needs: [fmt, clippy]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4.3.1
+      - name: Setup Rust
+        run: |
+          rustup default stable
+          rustup update stable
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830  # v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-pq-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-pq-
+            ${{ runner.os }}-cargo-
+      # Exercise the opt-in PQ feature gate so the MlDsa*/SlhDsa* arms of
+      # pq_feature_gate.rs actually compile and run. Without this job the
+      # default-build test suite only verifies half of the gate.
+      - name: Run tests (--features pq-experimental)
+        run: cargo test --workspace --features pq-experimental
+
   build:
     name: Build (${{ matrix.name }})
     needs: [fmt, clippy]

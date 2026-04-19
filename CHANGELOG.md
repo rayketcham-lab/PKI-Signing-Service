@@ -7,23 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.9] - 2026-04-19
+
 ### Security
+- **CSRF Origin guard on state-changing routes (#19)** — `POST /api/v1/*` and `/admin/*` now reject browser requests whose `Origin` does not match the server's `Host` or the configured `trusted_origins` allowlist. Missing `Origin` (curl / non-browser) is allowed; cross-origin browser POSTs are rejected with a generic `404` to avoid oracle behavior. Ten unit tests in `web::middleware` pin the state machine.
+- **`trusted_origins` config field** — new `SignConfig` field (default empty list → same-origin fallback) lets operators whitelist additional Origins for legitimate cross-origin browser clients.
+- **`SigningAlgorithm` and `PrivateKey` marked `#[non_exhaustive]` (#20)** — external crates can no longer write exhaustive matches that silently break when new algorithms land.
 - **Multipart streaming body-limit now returns 413** — uploads without a `Content-Length` header (chunked transfer-encoding) that exceed `max_upload_size` are rejected with `413 Payload Too Large` instead of `500 Internal Server Error`. The fix walks the multipart error source chain for `http_body_util::LengthLimitError` and maps it to `SignError::FileTooLarge`, closing the 500-leakage gap the pre-buffer layer left behind.
-- **Release ci-gate now runs cargo-audit + cargo-deny** — vulnerable dependencies can no longer ship via the release workflow, even if admin-bypass is used on `main`.
-- **Cosign signing failures now fail the release** — removed `|| echo` fallback on `gh release upload` and added a post-sign presence check for every `.sig`/`.cosign-bundle`. v0.5.8 shipped without supply-chain signatures because of this silent-fail; regression guard added.
+- **Release ci-gate now runs cargo-audit + cargo-deny (#70)** — vulnerable dependencies can no longer ship via the release workflow, even if admin-bypass is used on `main`.
+- **Cosign signing failures now fail the release (#69)** — removed `|| echo` fallback on `gh release upload` and added a post-sign presence check for every `.sig`/`.cosign-bundle`. v0.5.8 shipped without supply-chain signatures because of this silent-fail; `cosign_guard_loop_prevents_silent_sig_fail` regression test asserts the `set -euo pipefail` + existence check survive.
 - **ML-DSA / SLH-DSA moved behind `pq-experimental` feature flag (#72)** — the `ml-dsa` crate and all `PrivateKey::MlDsa*` / `SigningAlgorithm::MlDsa*` / `SigningAlgorithm::SlhDsa*` variants are now gated. The default build does not resolve `ml-dsa`, which removes RUSTSEC-2025-0144 (timing side-channel), CVE-2026-22705, CVE-2026-24850, and GHSA-h37v-hp6w-2pp8 from the default dep graph. `tests/pq_feature_gate.rs` asserts the invariant at CI time via exhaustive match + `cargo tree --no-default-features --invert ml-dsa`.
-- **rustls-webpki CVE floor regression test** — supply-chain test asserts locked version >= 0.103.12.
+- **Supply-chain version floors** — `tests/supply_chain_regression.rs` asserts locked versions `rustls-webpki >= 0.103.12`, `rustls >= 0.23.37`, `ring >= 0.17.14`; a silent downgrade via lockfile churn now fails CI.
+- **SECURITY.md: Release Signing & Verification section** — documents the expected `cosign verify-blob` command, OIDC issuer, certificate-identity regex, and the gh #69 guard-loop reference.
 
 ### Fixed
+- **README factual drift corrected** — rate-limit overclaim ("per-endpoint, per-IP") replaced with accurate "global in-flight concurrency cap"; stale closed-issue references (#42, #45, #46) removed; shipped `pq-experimental` gate moved from v0.6 future-roadmap to "Recently shipped"; CSRF Origin guard added to the Security feature list; `cargo test --all` standardized to `cargo test --workspace`.
 - `.github/dependabot.yml` `rand` ignore rule used unsupported `versions: ["0.8.x"]` syntax (silent no-op); replaced with `update-types: [version-update:semver-major]`.
 - README release-asset URLs drift guard — integration test parses README install block and asserts every `pki-sign-*` asset name is actually produced by `release.yml`.
+- `sanitize_filename` UTF-8 panic on multi-byte boundary truncation; now uses `str::is_char_boundary` and has adversarial tests.
+- Removed unused `SlhDsa*` match arms from `pkcs7/builder.rs` that were unreachable under the new `pq-experimental` gate.
+- Clippy `manual_repeat_n`: `std::iter::repeat('a').take(N)` → `std::iter::repeat_n('a', N)` in test helpers.
 
 ### Added
+- `pq-experimental` feature matrix leg in CI (#17) — `cargo test --features pq-experimental` runs on every push alongside the default build.
+- `RUSTSEC-2026-0097` entry in `deny.toml` ignores with rationale comment.
 - `yaml-lint` CI job covering `.github/workflows` and `.github/dependabot.yml`.
 - `test_sign_oversized_no_content_length_rejected` — chunked/no-CL path 413 regression.
 - `test_exact_boundary_content_length_not_413` — off-by-one regression on `body == max_upload_size`.
-- `tests/supply_chain_regression.rs` — Cargo.lock version-floor assertions.
-- `tests/release_assets.rs` — README/release.yml asset-name drift guard.
+- `tests/supply_chain_regression.rs` — Cargo.lock version-floor assertions (rustls-webpki, rustls, ring).
+- `tests/release_assets.rs` — README/release.yml asset-name drift guard + cosign guard-loop regression test.
 - `tests/pq_feature_gate.rs` — compile-time + dep-tree assertions for the `pq-experimental` gate.
 
 ## [0.5.8] - 2026-04-16

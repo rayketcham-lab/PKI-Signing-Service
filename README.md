@@ -22,7 +22,7 @@ No OpenSSL. No `signtool.exe`. No external dependencies. One binary.
 [![OpenSSL](https://img.shields.io/badge/OpenSSL-not%20required-brightgreen?logo=openssl&logoColor=white)](https://github.com/rayketcham-lab/PKI-Signing-Service)
 
 <!-- Project Info -->
-[![Version](https://img.shields.io/badge/version-0.5.8-blue?logo=semver&logoColor=white)](https://github.com/rayketcham-lab/PKI-Signing-Service/releases/latest)
+[![Version](https://img.shields.io/badge/version-0.5.9-blue?logo=semver&logoColor=white)](https://github.com/rayketcham-lab/PKI-Signing-Service/releases/latest)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-green?logo=apache&logoColor=white)](LICENSE)
 [![Rust](https://img.shields.io/badge/language-Rust-orange?logo=rust&logoColor=white)](https://www.rust-lang.org/)
 [![MSRV](https://img.shields.io/badge/MSRV-1.88-orange?logo=rust&logoColor=white)](https://blog.rust-lang.org/)
@@ -71,7 +71,7 @@ No OpenSSL. No `signtool.exe`. No external dependencies. One binary.
 - **LDAP authentication** --- Header-based auth via reverse proxy
 - **Certificate management** --- Admin API for hot-reload, listing, and rotation
 - **Audit logging** --- Every signing operation logged with request ID, hash, client IP, and duration
-- **Rate limiting** --- Per-endpoint and per-IP limits on the web service
+- **Concurrency limit** --- Global ceiling on in-flight signing requests (`rate_limit_rps`, default 10) to bound CPU exhaustion
 - **CIDR-aware reverse-proxy trust** --- Only whitelisted CIDRs may set `X-Forwarded-For` / `X-Real-IP`
 - **Cosign-signed releases** --- Every release artifact ships with `.sig` + `.cosign-bundle` for supply-chain verification
 - **Evidence Record Syntax** --- RFC 4998 long-term archive timestamps
@@ -398,7 +398,7 @@ Compatible with any RFC 3161 client --- `signtool.exe`, `openssl ts`, or this to
 ## CLI Reference
 
 ```
-pki-sign 0.5.8
+pki-sign 0.5.9
 PKI Signing Service - Pure Rust Code Signing Engine
 
 USAGE:
@@ -493,7 +493,8 @@ COMMANDS:
 - **Auth modes** --- None (dev), LDAP header pass-through, mTLS, API key.
 - **Security headers + CSP** --- Applied via middleware on all responses; fail-closed auth middleware.
 - **Body-limit enforcement** --- Oversized uploads rejected with `413` before any bytes are buffered (Content-Length + chunked transfer-encoding both covered).
-- **Rate limiting** --- Per-endpoint and per-IP, with CIDR-aware reverse-proxy trust for `X-Forwarded-For`.
+- **CSRF Origin guard** --- State-changing routes (`POST /api/v1/*`, `/admin/*`) reject browser requests whose `Origin` does not match the server's `Host` or the configured `trusted_origins` allowlist. Missing `Origin` (curl/scripts) is allowed.
+- **Concurrency limiting** --- Global in-flight cap on signing endpoints via `rate_limit_rps`; CIDR-aware reverse-proxy trust for `X-Forwarded-For` / `X-Real-IP`.
 - **Supply-chain signing** --- Release artifacts signed with cosign (keyless / GitHub OIDC). Regression test asserts `.sig` + `.cosign-bundle` ship for every binary.
 - **CI hardening** --- `cargo-audit` + `cargo-deny` on every push *and* the release gate. YAML lint on workflows + dependabot config. All GitHub Action versions pinned to commit SHAs.
 - **Secret scanning** --- Pre-commit hook + CI gate block committed credentials.
@@ -524,8 +525,8 @@ cargo build --release --target x86_64-unknown-linux-musl
 ### Run checks
 
 ```bash
-cargo test --all
-cargo clippy --all-targets -- -D warnings
+cargo test --workspace
+cargo clippy --all-targets --workspace -- -D warnings
 cargo fmt --all --check
 ```
 
@@ -555,11 +556,15 @@ WantedBy=multi-user.target
 
 The project is stable for Authenticode, detached CMS, and RFC 3161 signing workloads. Ongoing work is tracked in [GitHub issues](https://github.com/rayketcham-lab/PKI-Signing-Service/issues); the milestones below capture the directional bets.
 
-### v0.6 --- PQ-experimental opt-in + structural clean-up
+### Recently shipped
 
-- **Feature-gate ML-DSA behind `pq-experimental`** ([#72](https://github.com/rayketcham-lab/PKI-Signing-Service/issues/72)) --- ✅ **shipped** in the current `main`. Default builds drop the `ml-dsa` / `slh-dsa` dependencies entirely; post-quantum opt-in via `cargo build --features pq-experimental`. The `default_build_cargo_tree_omits_ml_dsa` test pins the invariant.
+- **Feature-gate ML-DSA behind `pq-experimental`** ([#72](https://github.com/rayketcham-lab/PKI-Signing-Service/issues/72)) --- default builds drop the `ml-dsa` / `slh-dsa` dependencies entirely; post-quantum opt-in via `cargo build --features pq-experimental`. The `default_build_cargo_tree_omits_ml_dsa` test pins the invariant.
+- **CSRF Origin guard** ([#19](https://github.com/rayketcham-lab/PKI-Signing-Service/issues/19)) --- state-changing routes now reject cross-origin browser POSTs; `trusted_origins` allowlist with same-origin fallback.
+- **Supply-chain regression floor** --- Cargo.lock-parsed tests pin `rustls-webpki ≥ 0.103.12`, `rustls ≥ 0.23.37`, `ring ≥ 0.17.14`; cosign guard-loop regression test catches silent unsigned-asset ships.
+
+### v0.6 --- Structural clean-up
+
 - **Decompose `signer.rs` / `verifier.rs` monoliths** ([#55](https://github.com/rayketcham-lab/PKI-Signing-Service/issues/55)) --- extract PFX loading and cert-validation helpers into dedicated modules without public-API churn.
-- **ML-DSA timing-side-channel tracking** ([#42](https://github.com/rayketcham-lab/PKI-Signing-Service/issues/42)) --- follow the upstream `ml-dsa` 0.0.4 → stable release and drop the `pq-experimental`-only `cargo-audit` ignores as soon as a constant-time Decompose lands.
 
 ### v0.7 --- Hybrid / composite certificates
 
@@ -569,7 +574,7 @@ The project is stable for Authenticode, detached CMS, and RFC 3161 signing workl
 ### v1.0 --- Production freeze
 
 - Stable REST API surface with semver guarantees on `/api/v1/*`
-- CAB/MSI Authenticode interop parity with `osslsigncode` / `signtool` (current gaps tracked in [#45](https://github.com/rayketcham-lab/PKI-Signing-Service/issues/45), [#46](https://github.com/rayketcham-lab/PKI-Signing-Service/issues/46))
+- CAB/MSI Authenticode interop parity with `osslsigncode` / `signtool` (base parity landed in v0.5.7; continued hardening tracked via new issues as they surface)
 - SLSA provenance attestations alongside the existing cosign signatures
 - Documented HSM / KMS key-backend interfaces (no private-key-on-disk requirement)
 

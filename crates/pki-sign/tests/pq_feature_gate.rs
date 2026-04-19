@@ -2,15 +2,19 @@
 //!
 //! The CVE posture of the default build depends on ML-DSA being unreachable
 //! (no `ml-dsa` crate in the dep tree, no `PrivateKey::MlDsa*` variants
-//! constructible). These tests pin that invariant — changes that accidentally
-//! re-expose ML-DSA in a default build will fail to compile.
+//! constructible). These tests pin that invariant.
 //!
-//! The proof is entirely compile-time: the exhaustive matches below succeed
-//! only if the enum arms exist exactly as this file asserts. An extra variant
-//! leaking through the gate makes the default-build match non-exhaustive; a
-//! missing variant under the feature makes the pq-experimental match refer to
-//! an unknown ident. Either failure surfaces as a build error, not a runtime
-//! assertion failure.
+//! The PQ variants of [`PrivateKey`] and [`SigningAlgorithm`] are already
+//! `#[cfg(feature = "pq-experimental")]`-gated at the enum definition, so in a
+//! default build they do not exist at compile time at all — naming them here
+//! would fail to build. The matches below name every non-PQ variant as a
+//! positive cross-check that the classical surface stays wired up, and the
+//! `cargo tree` assertion (`default_build_cargo_tree_omits_ml_dsa`) proves
+//! the `ml-dsa` crate itself is absent from the default dep graph.
+//!
+//! The wildcard arms are a syntactic requirement of `#[non_exhaustive]` across
+//! crate boundaries and are unreachable in practice: every currently-defined
+//! variant is named above.
 
 use pki_sign::pkcs7::SigningAlgorithm;
 use pki_sign::signer::PrivateKey;
@@ -25,6 +29,7 @@ fn default_build_private_key_has_no_ml_dsa_variants() {
             PrivateKey::EcdsaP384(_) => "p384",
             PrivateKey::EcdsaP521(_) => "p521",
             PrivateKey::Ed25519(_) => "ed25519",
+            _ => unreachable!("non_exhaustive wildcard — unreachable in default build"),
         }
     }
     let _ = tag;
@@ -45,6 +50,7 @@ fn default_build_signing_algorithm_has_no_pq_variants() {
             SigningAlgorithm::EcdsaSha384 => "ec-384",
             SigningAlgorithm::EcdsaSha512 => "ec-512",
             SigningAlgorithm::Ed25519 => "ed25519",
+            _ => unreachable!("non_exhaustive wildcard — unreachable in default build"),
         }
     }
     let _ = tag;
@@ -63,6 +69,7 @@ fn pq_experimental_private_key_exposes_ml_dsa_variants() {
             PrivateKey::MlDsa44(_) => "ml-dsa-44",
             PrivateKey::MlDsa65(_) => "ml-dsa-65",
             PrivateKey::MlDsa87(_) => "ml-dsa-87",
+            _ => unreachable!("non_exhaustive wildcard — all known pq-experimental variants named"),
         }
     }
     let _ = tag;
@@ -89,6 +96,7 @@ fn pq_experimental_signing_algorithm_has_pq_variants() {
             SigningAlgorithm::SlhDsaSha2128s => "slh-dsa-128s",
             SigningAlgorithm::SlhDsaSha2192s => "slh-dsa-192s",
             SigningAlgorithm::SlhDsaSha2256s => "slh-dsa-256s",
+            _ => unreachable!("non_exhaustive wildcard — all known pq-experimental variants named"),
         }
     }
     let _ = tag;

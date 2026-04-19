@@ -175,6 +175,100 @@ pub async fn admin_auth_middleware(
     not_found_response()
 }
 
+/// Decide whether a state-changing request (`POST`/`PUT`/`PATCH`/`DELETE`)
+/// should be allowed by the CSRF Origin guard (gh #19).
+///
+/// * `origin` — raw value of the `Origin` header. `None` means the client did
+///   not send one (typical of `curl`, server-side fetch without CORS mode,
+///   or any non-browser caller) → allow, because CSRF requires a browser.
+/// * `host` — raw value of the `Host` header, used as the same-origin anchor
+///   when no explicit allowlist is configured.
+/// * `allowlist` — `SignConfig::trusted_origins`. Non-empty means *strict
+///   allowlist mode*: the supplied `Origin` must match one entry exactly,
+///   modulo trailing-slash. Empty means *same-origin mode*: the `Origin`
+///   must match `http(s)://<Host>`.
+///
+/// The return value is deliberately boolean rather than `Result` so tests
+/// can assert behavior without invoking the axum runtime.
+#[must_use]
+pub(crate) fn origin_is_allowed(
+    origin: Option<&str>,
+    host: Option<&str>,
+    allowlist: &[String],
+) -> bool {
+    let Some(raw_origin) = origin else {
+        return true;
+    };
+    let origin = raw_origin.trim().trim_end_matches('/');
+    if origin.is_empty() {
+        return false;
+    }
+
+    if !allowlist.is_empty() {
+        return allowlist
+            .iter()
+            .map(|entry| entry.trim().trim_end_matches('/'))
+            .any(|entry| entry.eq_ignore_ascii_case(origin));
+    }
+
+    let Some(host) = host else {
+        return false;
+    };
+    let host = host.trim();
+    if host.is_empty() {
+        return false;
+    }
+    let http = format!("http://{host}");
+    let https = format!("https://{host}");
+    origin.eq_ignore_ascii_case(&http) || origin.eq_ignore_ascii_case(&https)
+}
+
+/// CSRF Origin allowlist middleware (gh #19).
+///
+/// Applied to state-changing routes (`POST`/`PUT`/`PATCH`/`DELETE`). Browsers
+/// send an `Origin` header on cross-site state-changing requests; this
+/// middleware rejects any such request whose `Origin` does not match the
+/// configured allowlist (or, when none is configured, the request's own
+/// `Host`). Requests without an `Origin` header are allowed through because
+/// CSRF is a browser-driven threat — non-browser clients (scripts, `curl`)
+/// don't send `Origin` at all.
+pub async fn csrf_origin_middleware(
+    State(state): State<Arc<AppState>>,
+    request: axum::http::Request<axum::body::Body>,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    use axum::http::Method;
+
+    let method = request.method();
+    if !matches!(
+        *method,
+        Method::POST | Method::PUT | Method::PATCH | Method::DELETE
+    ) {
+        return next.run(request).await;
+    }
+
+    let origin = request
+        .headers()
+        .get(header::ORIGIN)
+        .and_then(|v| v.to_str().ok());
+    let host = request
+        .headers()
+        .get(header::HOST)
+        .and_then(|v| v.to_str().ok());
+
+    if origin_is_allowed(origin, host, &state.config.trusted_origins) {
+        return next.run(request).await;
+    }
+
+    tracing::warn!(
+        origin = origin.unwrap_or("<missing>"),
+        host = host.unwrap_or("<missing>"),
+        method = %method,
+        "CSRF guard rejected: Origin not in allowlist / same-origin mismatch"
+    );
+    not_found_response()
+}
+
 /// Security headers middleware.
 ///
 /// Adds standard security headers to all responses and removes the Server header.
@@ -381,6 +475,109 @@ mod tests {
     }
 
     // ── Issue #60: constant_time_eq uses subtle crate ──
+
+    // ── Issue #19: CSRF Origin guard ──
+
+    #[test]
+    fn csrf_origin_missing_header_allowed() {
+        // Non-browser clients (curl, scripts) don't send Origin; allow.
+        assert!(origin_is_allowed(None, Some("pki-sign.example.com"), &[]));
+    }
+
+    #[test]
+    fn csrf_origin_same_origin_allowed_https() {
+        assert!(origin_is_allowed(
+            Some("https://pki-sign.example.com"),
+            Some("pki-sign.example.com"),
+            &[],
+        ));
+    }
+
+    #[test]
+    fn csrf_origin_same_origin_allowed_http() {
+        assert!(origin_is_allowed(
+            Some("http://pki-sign.example.com:6447"),
+            Some("pki-sign.example.com:6447"),
+            &[],
+        ));
+    }
+
+    #[test]
+    fn csrf_origin_hostile_cross_site_rejected() {
+        assert!(!origin_is_allowed(
+            Some("https://evil.example.com"),
+            Some("pki-sign.example.com"),
+            &[],
+        ));
+    }
+
+    #[test]
+    fn csrf_origin_allowlist_exact_match_accepted() {
+        let allowed = vec!["https://pki.corp.example.com".to_string()];
+        assert!(origin_is_allowed(
+            Some("https://pki.corp.example.com"),
+            Some("pki-sign.internal"),
+            &allowed,
+        ));
+    }
+
+    #[test]
+    fn csrf_origin_allowlist_trailing_slash_accepted() {
+        let allowed = vec!["https://pki.corp.example.com/".to_string()];
+        assert!(origin_is_allowed(
+            Some("https://pki.corp.example.com"),
+            None,
+            &allowed,
+        ));
+    }
+
+    #[test]
+    fn csrf_origin_allowlist_rejects_non_member() {
+        let allowed = vec!["https://pki.corp.example.com".to_string()];
+        assert!(!origin_is_allowed(
+            Some("https://evil.example.com"),
+            Some("pki.corp.example.com"),
+            &allowed,
+        ));
+    }
+
+    #[test]
+    fn csrf_origin_allowlist_is_scheme_sensitive() {
+        // `http://` must NOT satisfy an `https://` allowlist entry — a
+        // downgraded transport would be a CSRF + MITM combo.
+        let allowed = vec!["https://pki.corp.example.com".to_string()];
+        assert!(!origin_is_allowed(
+            Some("http://pki.corp.example.com"),
+            None,
+            &allowed,
+        ));
+    }
+
+    #[test]
+    fn csrf_origin_empty_origin_rejected() {
+        // An explicit empty/whitespace Origin header is not a missing header;
+        // browsers don't send one, so treat it as hostile.
+        assert!(!origin_is_allowed(
+            Some(""),
+            Some("pki-sign.example.com"),
+            &[],
+        ));
+        assert!(!origin_is_allowed(
+            Some("   "),
+            Some("pki-sign.example.com"),
+            &[],
+        ));
+    }
+
+    #[test]
+    fn csrf_origin_missing_host_in_same_origin_mode_rejected() {
+        // No Host AND no allowlist AND an Origin header → can't validate → reject.
+        assert!(!origin_is_allowed(
+            Some("https://pki.corp.example.com"),
+            None,
+            &[],
+        ));
+    }
 
     #[test]
     fn test_constant_time_eq_uses_subtle_crate() {
