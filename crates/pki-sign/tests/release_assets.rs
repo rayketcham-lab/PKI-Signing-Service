@@ -49,8 +49,9 @@ fn readme_asset_names(readme: &str) -> Vec<String> {
 
 /// Derive the set of asset *basenames* published by `release.yml` by looking
 /// at the Package/Copy-Item lines for `dist/`. Each `pki-sign-*` binary gets
-/// a `.sha256` sibling from the packaging step and `.sig` + `.cosign-bundle`
-/// siblings from the cosign signing step.
+/// a `.sha256` sibling from the packaging step and a `.cosign-bundle` sibling
+/// from the cosign signing step (cosign 2.x --new-bundle-format is
+/// self-contained — no separate .sig is produced).
 fn release_workflow_assets(workflow: &str) -> Vec<String> {
     let mut binaries: Vec<String> = Vec::new();
     for line in workflow.lines() {
@@ -82,7 +83,6 @@ fn release_workflow_assets(workflow: &str) -> Vec<String> {
         all.push(name.clone());
         all.push(format!("{name}.sha256"));
         if cosign_signs {
-            all.push(format!("{name}.sig"));
             all.push(format!("{name}.cosign-bundle"));
         }
     }
@@ -139,18 +139,17 @@ fn cosign_guard_loop_prevents_silent_sig_fail() {
         "release.yml must invoke `cosign sign-blob` to produce signatures"
     );
 
-    let has_existence_guard = workflow
-        .contains(r#"if [[ ! -f "${f}.sig" || ! -f "${f}.cosign-bundle" ]]"#)
-        || workflow.contains(r#"if [[ ! -f "${f}.cosign-bundle" || ! -f "${f}.sig" ]]"#);
+    let has_existence_guard =
+        workflow.contains(r#"if [[ ! -f "${f}.cosign-bundle" ]]"#);
     assert!(
         has_existence_guard,
-        "release.yml must verify `${{f}}.sig` and `${{f}}.cosign-bundle` exist after \
-         signing (gh #69 regression — prevents silently shipping unsigned assets)"
+        "release.yml must verify `${{f}}.cosign-bundle` exists after signing \
+         (gh #69 regression — prevents silently shipping unsigned assets)"
     );
 
     assert!(
-        workflow.contains("missing signature or bundle") && workflow.contains("exit 1"),
+        workflow.contains("missing cosign bundle") && workflow.contains("exit 1"),
         "release.yml's cosign guard loop must `exit 1` with a clear error when \
-         a signature or bundle is missing (gh #69 regression)"
+         the cosign bundle is missing (gh #69 regression)"
     );
 }

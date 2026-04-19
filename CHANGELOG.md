@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.10] - 2026-04-19
+
+### Fixed
+- **Release workflow cosign step (#69 follow-up)** — cosign 2.x with `--new-bundle-format` ignores `--output-signature`, so the `.sig` file was never produced and the v0.5.9 release job failed at the post-sign existence guard. Removed the deprecated `--output-signature` flag, the `.sig` existence check, and the `.sig` upload glob. The `.cosign-bundle` is self-contained (signature + Fulcio certificate) — no separate detached signature is needed.
+- `tests/release_assets.rs` updated to assert the single-bundle invariant and the simplified guard-loop error message.
+- README, SECURITY.md, and CHANGELOG 0.5.9 entries corrected to describe the self-contained `.cosign-bundle` (no stray `.sig` references).
+
 ## [0.5.9] - 2026-04-19
 
 ### Security
@@ -15,7 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`SigningAlgorithm` and `PrivateKey` marked `#[non_exhaustive]` (#20)** — external crates can no longer write exhaustive matches that silently break when new algorithms land.
 - **Multipart streaming body-limit now returns 413** — uploads without a `Content-Length` header (chunked transfer-encoding) that exceed `max_upload_size` are rejected with `413 Payload Too Large` instead of `500 Internal Server Error`. The fix walks the multipart error source chain for `http_body_util::LengthLimitError` and maps it to `SignError::FileTooLarge`, closing the 500-leakage gap the pre-buffer layer left behind.
 - **Release ci-gate now runs cargo-audit + cargo-deny (#70)** — vulnerable dependencies can no longer ship via the release workflow, even if admin-bypass is used on `main`.
-- **Cosign signing failures now fail the release (#69)** — removed `|| echo` fallback on `gh release upload` and added a post-sign presence check for every `.sig`/`.cosign-bundle`. v0.5.8 shipped without supply-chain signatures because of this silent-fail; `cosign_guard_loop_prevents_silent_sig_fail` regression test asserts the `set -euo pipefail` + existence check survive.
+- **Cosign signing failures now fail the release (#69)** — removed `|| echo` fallback on `gh release upload` and added a post-sign presence check for every `.cosign-bundle` (0.5.10 dropped the legacy `.sig` from the guard after cosign 2.x made it a no-op). v0.5.8 shipped without supply-chain signatures because of this silent-fail; `cosign_guard_loop_prevents_silent_sig_fail` regression test asserts the `set -euo pipefail` + existence check survive.
 - **ML-DSA / SLH-DSA moved behind `pq-experimental` feature flag (#72)** — the `ml-dsa` crate and all `PrivateKey::MlDsa*` / `SigningAlgorithm::MlDsa*` / `SigningAlgorithm::SlhDsa*` variants are now gated. The default build does not resolve `ml-dsa`, which removes RUSTSEC-2025-0144 (timing side-channel), CVE-2026-22705, CVE-2026-24850, and GHSA-h37v-hp6w-2pp8 from the default dep graph. `tests/pq_feature_gate.rs` asserts the invariant at CI time via exhaustive match + `cargo tree --no-default-features --invert ml-dsa`.
 - **Supply-chain version floors** — `tests/supply_chain_regression.rs` asserts locked versions `rustls-webpki >= 0.103.12`, `rustls >= 0.23.37`, `ring >= 0.17.14`; a silent downgrade via lockfile churn now fails CI.
 - **SECURITY.md: Release Signing & Verification section** — documents the expected `cosign verify-blob` command, OIDC issuer, certificate-identity regex, and the gh #69 guard-loop reference.

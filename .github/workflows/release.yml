@@ -185,24 +185,24 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
+          # cosign 2.x with --new-bundle-format produces a self-contained .cosign-bundle
+          # (signature + certificate). --output-signature is deprecated and ignored, so
+          # the guard only asserts bundle presence.
           for f in artifacts/linux-binaries/pki-sign-* artifacts/windows-binaries/pki-sign-*; do
             case "$f" in *.sha256) continue ;; esac
             echo "Signing $f..."
             cosign sign-blob "$f" \
               --yes \
-              --bundle "${f}.cosign-bundle" \
-              --output-signature "${f}.sig"
+              --bundle "${f}.cosign-bundle"
           done
           for f in artifacts/linux-binaries/pki-sign-* artifacts/windows-binaries/pki-sign-*; do
-            case "$f" in *.sha256|*.sig|*.cosign-bundle) continue ;; esac
-            if [[ ! -f "${f}.sig" || ! -f "${f}.cosign-bundle" ]]; then
-              echo "ERROR: missing signature or bundle for $f" >&2
+            case "$f" in *.sha256|*.cosign-bundle) continue ;; esac
+            if [[ ! -f "${f}.cosign-bundle" ]]; then
+              echo "ERROR: missing cosign bundle for $f" >&2
               exit 1
             fi
           done
           gh release upload "$TAG" \
-            artifacts/linux-binaries/*.sig \
             artifacts/linux-binaries/*.cosign-bundle \
-            artifacts/windows-binaries/*.sig \
             artifacts/windows-binaries/*.cosign-bundle \
             --clobber
