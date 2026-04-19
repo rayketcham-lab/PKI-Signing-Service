@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-04-19
+
+### Removed
+- **CMS EnvelopedData encryption surface** — `pkcs7/enveloped.rs`, `pkcs7/ecdh.rs`, `pkcs7/kem.rs`, `crypto/rsa_oaep.rs`, `crypto/hkdf.rs` deleted (~3.3k LOC). This is a signing service, not a key-agreement / confidentiality product. `POST /api/v1/sign-detached` (CMS SignedData via `Pkcs7Builder::new_detached()`) already covers the "wrap any file for transport + later verify" workflow. Dep graph drops `aes-gcm`, `aes`, `aes-kw`, `cbc`, `hkdf`, and the `ecdh` feature from p256/p384/p521.
+- **RFC 4998 Evidence Record Syntax (`ers.rs`)** — ~1.4k LOC removed. Long-term archive timestamps are a separate product scope; this repo ships RFC 3161 client + TSA server only.
+
+### Changed
+- Roadmap renumbered: v0.6 → v0.7 (structural clean-up), v0.7 → v0.8 (hybrid/composite).
+
 ## [0.5.11] - 2026-04-19
 
 ### Fixed

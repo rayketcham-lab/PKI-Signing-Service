@@ -38,9 +38,7 @@
 
 pub mod cab;
 pub mod config;
-pub mod crypto;
 pub mod error;
-pub mod ers;
 pub mod msi;
 pub mod pe;
 pub mod pkcs7;

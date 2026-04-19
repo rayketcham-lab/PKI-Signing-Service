@@ -22,7 +22,7 @@ No OpenSSL. No `signtool.exe`. No external dependencies. One binary.
 [![OpenSSL](https://img.shields.io/badge/OpenSSL-not%20required-brightgreen?logo=openssl&logoColor=white)](https://github.com/rayketcham-lab/PKI-Signing-Service)
 
 <!-- Project Info -->
-[![Version](https://img.shields.io/badge/version-0.5.11-blue?logo=semver&logoColor=white)](https://github.com/rayketcham-lab/PKI-Signing-Service/releases/latest)
+[![Version](https://img.shields.io/badge/version-0.6.0-blue?logo=semver&logoColor=white)](https://github.com/rayketcham-lab/PKI-Signing-Service/releases/latest)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-green?logo=apache&logoColor=white)](LICENSE)
 [![Rust](https://img.shields.io/badge/language-Rust-orange?logo=rust&logoColor=white)](https://www.rust-lang.org/)
 [![MSRV](https://img.shields.io/badge/MSRV-1.88-orange?logo=rust&logoColor=white)](https://blog.rust-lang.org/)
@@ -74,7 +74,6 @@ No OpenSSL. No `signtool.exe`. No external dependencies. One binary.
 - **Concurrency limit** --- Global ceiling on in-flight signing requests (`rate_limit_rps`, default 10) to bound CPU exhaustion
 - **CIDR-aware reverse-proxy trust** --- Only whitelisted CIDRs may set `X-Forwarded-For` / `X-Real-IP`
 - **Cosign-signed releases** --- Every release artifact ships with a self-contained `.cosign-bundle` (signature + certificate) for supply-chain verification
-- **Evidence Record Syntax** --- RFC 4998 long-term archive timestamps
 - **Static binary** --- `x86_64-unknown-linux-musl` target, zero runtime dependencies
 
 > [!TIP]
@@ -398,7 +397,7 @@ Compatible with any RFC 3161 client --- `signtool.exe`, `openssl ts`, or this to
 ## CLI Reference
 
 ```
-pki-sign 0.5.11
+pki-sign 0.6.0
 PKI Signing Service - Pure Rust Code Signing Engine
 
 USAGE:
@@ -458,9 +457,8 @@ COMMANDS:
            │  Authenticode  │   │                │   │              │
            │  hash compute  │   │  SignedData    │   │  TSA client  │
            │  sig embed     │   │  DigestedData  │   │  failover    │
-           │  cert table    │   │  EnvelopedData │   └──────────────┘
-           └────────────────┘   │  ECDH / KEM    │
-                                └────────────────┘
+           │  cert table    │   │                │   └──────────────┘
+           └────────────────┘   └────────────────┘
 ```
 
 ### Modules
@@ -470,15 +468,13 @@ COMMANDS:
 | `pe/` | PE/COFF parser, Authenticode hash, signature embedding |
 | `cab` | Cabinet archive parser and Authenticode signer |
 | `msi` | MSI compound-document parser and Authenticode signer |
-| `pkcs7/` | CMS/PKCS#7 ASN.1 builder --- SignedData, DigestedData, EnvelopedData, ECDH, KEM |
+| `pkcs7/` | CMS/PKCS#7 ASN.1 builder --- SignedData, DigestedData, ESS signed attributes |
 | `signer` | Signing orchestrator --- PFX load, file type detection, pipeline coordination |
 | `verifier` | Signature verification --- digest comparison, chain validation, EKU checking |
 | `timestamp` | RFC 3161 TSA client with failover across multiple servers |
 | `tsa_http` | Standalone TSA HTTP server |
 | `tsa_server` | TSA token generation engine |
-| `ers` | Evidence Record Syntax (RFC 4998) --- long-term archive timestamps |
 | `powershell` | PowerShell script signing with Base64 PKCS#7 blocks |
-| `crypto/` | HKDF key derivation, RSA-OAEP encryption |
 | `web/` | axum HTTP server, LDAP middleware, audit logging, admin API |
 | `config` | TOML configuration with env var and CLI overrides |
 
@@ -558,15 +554,16 @@ The project is stable for Authenticode, detached CMS, and RFC 3161 signing workl
 
 ### Recently shipped
 
+- **Scope trim (v0.6.0)** --- removed CMS EnvelopedData (encryption: ECDH, ML-KEM, RSA-OAEP key transport) and RFC 4998 Evidence Record Syntax. This is a signing service, not a key-agreement / long-term-archive product. `sign-detached` (CMS SignedData) already covers the "wrap any file for transport + later verify" workflow. ~4.7k LOC and five supporting crates gone from the dep graph.
 - **Feature-gate ML-DSA behind `pq-experimental`** ([#72](https://github.com/rayketcham-lab/PKI-Signing-Service/issues/72)) --- default builds drop the `ml-dsa` / `slh-dsa` dependencies entirely; post-quantum opt-in via `cargo build --features pq-experimental`. The `default_build_cargo_tree_omits_ml_dsa` test pins the invariant.
 - **CSRF Origin guard** ([#19](https://github.com/rayketcham-lab/PKI-Signing-Service/issues/19)) --- state-changing routes now reject cross-origin browser POSTs; `trusted_origins` allowlist with same-origin fallback.
 - **Supply-chain regression floor** --- Cargo.lock-parsed tests pin `rustls-webpki ≥ 0.103.12`, `rustls ≥ 0.23.37`, `ring ≥ 0.17.14`; cosign guard-loop regression test catches silent unsigned-asset ships.
 
-### v0.6 --- Structural clean-up
+### v0.7 --- Structural clean-up
 
 - **Decompose `signer.rs` / `verifier.rs` monoliths** ([#55](https://github.com/rayketcham-lab/PKI-Signing-Service/issues/55)) --- extract PFX loading and cert-validation helpers into dedicated modules without public-API churn.
 
-### v0.7 --- Hybrid / composite certificates
+### v0.8 --- Hybrid / composite certificates
 
 - **Dual-sign PKCS#7** ([#22](https://github.com/rayketcham-lab/PKI-Signing-Service/issues/22) phase 2) --- same PKCS#7 envelope carries an RSA or ECDSA signature *and* an ML-DSA counter-signature, so a downstream verifier with either capability can validate.
 - **Composite signatures (NIST SP 800-227)** ([#22](https://github.com/rayketcham-lab/PKI-Signing-Service/issues/22) phase 3) --- single certificate carrying both a classical and a PQ key; tracks the NIST composite-signature spec as it finalizes.
