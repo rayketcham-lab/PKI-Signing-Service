@@ -6,6 +6,14 @@ No OpenSSL. No `signtool.exe`. No external dependencies. One binary.
 
 **[Landing page](https://rayketcham-lab.github.io/PKI-Signing-Service/)** · **[Live demos (asciinema)](https://rayketcham-lab.github.io/PKI-Signing-Service/demo.html)** · **[Releases](https://github.com/rayketcham-lab/PKI-Signing-Service/releases)** · **[Changelog](CHANGELOG.md)**
 
+<p align="center">
+  <a href="https://rayketcham-lab.github.io/PKI-Signing-Service/demo.html">
+    <img src="docs/demos/the-intern.svg" alt="pki-sign demo — sign, verify, deploy a Windows PE in under 30s" width="800">
+  </a>
+  <br>
+  <em>▶ <a href="https://rayketcham-lab.github.io/PKI-Signing-Service/demo.html">Watch the full demo suite (6 scripted casts)</a></em>
+</p>
+
 ---
 
 ### Project Health
