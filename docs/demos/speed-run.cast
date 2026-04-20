@@ -47,7 +47,7 @@
 [8.50, "o", "  \u001b[1;32m✔\u001b[0m CAB archive       \u001b[2mAuthenticode  SHA-256 + RSA-2048\u001b[0m          \u001b[1;32m2 ms\u001b[0m\r\n"]
 [8.70, "o", "\u001b[1;32m❯\u001b[0m pki-sign sign --pfx rsa2048.pfx installer.msi\r\n"]
 [8.85, "o", "  \u001b[1;32m✔\u001b[0m MSI / OLE2        \u001b[2mAuthenticode  SHA-256 + RSA-2048\u001b[0m          \u001b[1;32m2 ms\u001b[0m\r\n"]
-[9.05, "o", "\u001b[1;32m❯\u001b[0m pki-sign sign --pfx rsa2048.pfx deploy.ps1\r\n"]
+[9.05, "o", "\u001b[1;32m❯\u001b[0m pki-sign sign --pfx rsa2048.pfx bootstrap.ps1\r\n"]
 [9.20, "o", "  \u001b[1;32m✔\u001b[0m PS1 SIP           \u001b[2mbase64 PKCS#7  SHA-256 + RSA-2048\u001b[0m         \u001b[1;32m2 ms\u001b[0m\r\n"]
 [9.40, "o", "\u001b[1;32m❯\u001b[0m pki-sign sign-detached --pfx rsa2048.pfx release.tar.gz\r\n"]
 [9.55, "o", "  \u001b[1;32m✔\u001b[0m Detached CMS      \u001b[2mPKCS#7 SignedData  SHA-256 + RSA-2048\u001b[0m     \u001b[1;32m2 ms\u001b[0m\r\n"]
