@@ -57,6 +57,37 @@ fn multipart_error_to_app(err: axum_extra::extract::multipart::MultipartError) -
 /// When LDAP is enabled and `cert_groups` is configured, the user must belong to
 /// the LDAP group mapped to the requested certificate name. Admins bypass this check.
 /// Returns `Ok(())` if authorized or if cert-group enforcement is not configured.
+/// Resolve the requested credential by name (or fall back to the default),
+/// then enforce LDAP cert-group authorization. Centralises the three-way
+/// duplicated block that previously lived in `sign_file`, `sign_detached`,
+/// and `sign_batch` — a single authorization check also prevents the
+/// "forgot to authorize" class of bug when new signing handlers land.
+fn resolve_and_authorize_credential<'a>(
+    credentials: &'a [(String, crate::signer::SigningCredentials)],
+    default_idx: usize,
+    cert_type: Option<&str>,
+    user_info: Option<&UserInfo>,
+    config: &crate::config::SignConfig,
+) -> Result<&'a (String, crate::signer::SigningCredentials), AppError> {
+    if credentials.is_empty() {
+        return Err(AppError::new(SignError::Config(
+            "No signing credentials loaded".into(),
+        )));
+    }
+    let entry = if let Some(ct) = cert_type {
+        credentials
+            .iter()
+            .find(|(name, _)| name == ct)
+            .ok_or_else(|| {
+                AppError::new(SignError::Config(format!("Certificate '{}' not found", ct)))
+            })?
+    } else {
+        &credentials[default_idx]
+    };
+    check_cert_authorization(user_info, &entry.0, config)?;
+    Ok(entry)
+}
+
 fn check_cert_authorization(
     user_info: Option<&UserInfo>,
     cert_name: &str,
@@ -274,25 +305,14 @@ pub async fn sign_file(
 
     // Get signing credentials
     let credentials = state.credentials.read().await;
-    if credentials.is_empty() {
-        return Err(AppError::new(SignError::Config(
-            "No signing credentials loaded".into(),
-        )));
-    }
-    let (cert_name, cred) = if let Some(ref ct) = cert_type {
-        credentials
-            .iter()
-            .find(|(name, _)| name == ct)
-            .ok_or_else(|| {
-                AppError::new(SignError::Config(format!("Certificate '{}' not found", ct)))
-            })?
-    } else {
-        let default_idx = *state.default_credential.read().await;
-        &credentials[default_idx]
-    };
-
-    // #9 fix: Enforce LDAP cert-group authorization
-    check_cert_authorization(user_info.as_ref().map(|e| &e.0), cert_name, &state.config)?;
+    let default_idx = *state.default_credential.read().await;
+    let (cert_name, cred) = resolve_and_authorize_credential(
+        &credentials,
+        default_idx,
+        cert_type.as_deref(),
+        user_info.as_ref().map(|e| &e.0),
+        &state.config,
+    )?;
 
     // Sign the file
     let tsa_config = if state.config.require_timestamp {
@@ -301,61 +321,58 @@ pub async fn sign_file(
         None
     };
 
-    let sign_options = crate::signer::SignOptions::default();
+    let result = crate::signer::sign_file(temp_input.path(), temp_output.path(), cred, tsa_config)
+        .await
+        .map_err(|e| {
+            state.stats.sign_errors.fetch_add(1, Ordering::Relaxed);
+            let duration = start.elapsed().as_millis() as u64;
+            state.audit.log(&AuditEntry {
+                timestamp: chrono::Utc::now().to_rfc3339(),
+                request_id: request_id.to_string(),
+                action: "sign".into(),
+                client_ip: client_ip.clone(),
+                filename: Some(filename.clone()),
+                file_size: Some(data.len() as u64),
+                file_hash: Some(input_hash.clone()),
+                signed_hash: None,
+                signer_subject: Some(cert_name.clone()),
+                timestamped: None,
+                duration_ms: duration,
+                status: "error".into(),
+                error_message: Some(e.to_string()),
+                cert_type: None,
+                signed_filename: None,
+                file_type: None,
+            });
 
-    let result = crate::signer::sign_file_with_options(
-        temp_input.path(),
-        temp_output.path(),
-        cred,
-        tsa_config,
-        &sign_options,
-    )
-    .await
-    .map_err(|e| {
-        state.stats.sign_errors.fetch_add(1, Ordering::Relaxed);
-        let duration = start.elapsed().as_millis() as u64;
-        state.audit.log(&AuditEntry {
-            timestamp: chrono::Utc::now().to_rfc3339(),
-            request_id: request_id.to_string(),
-            action: "sign".into(),
-            client_ip: client_ip.clone(),
-            filename: Some(filename.clone()),
-            file_size: Some(data.len() as u64),
-            file_hash: Some(input_hash.clone()),
-            signed_hash: None,
-            signer_subject: Some(cert_name.clone()),
-            timestamped: None,
-            duration_ms: duration,
-            status: "error".into(),
-            error_message: Some(e.to_string()),
-            cert_type: None,
-            signed_filename: None,
-            file_type: None,
-        });
+            // Auto-report to GitHub if enabled
+            if state.gh_reporter.is_some() {
+                let error_type = format!("{:?}", e)
+                    .split('(')
+                    .next()
+                    .unwrap_or("Unknown")
+                    .to_string();
+                let error_msg = e.to_string();
+                let fname = filename.clone();
+                let fsize = data.len() as u64;
+                let state_clone = Arc::clone(&state);
+                // Fire-and-forget: spawn a task to create the issue
+                drop(tokio::spawn(async move {
+                    if let Some(ref reporter) = state_clone.gh_reporter {
+                        reporter
+                            .report_signing_error(
+                                &error_type,
+                                &error_msg,
+                                Some(&fname),
+                                Some(fsize),
+                            )
+                            .await;
+                    }
+                }));
+            }
 
-        // Auto-report to GitHub if enabled
-        if state.gh_reporter.is_some() {
-            let error_type = format!("{:?}", e)
-                .split('(')
-                .next()
-                .unwrap_or("Unknown")
-                .to_string();
-            let error_msg = e.to_string();
-            let fname = filename.clone();
-            let fsize = data.len() as u64;
-            let state_clone = Arc::clone(&state);
-            // Fire-and-forget: spawn a task to create the issue
-            drop(tokio::spawn(async move {
-                if let Some(ref reporter) = state_clone.gh_reporter {
-                    reporter
-                        .report_signing_error(&error_type, &error_msg, Some(&fname), Some(fsize))
-                        .await;
-                }
-            }));
-        }
-
-        AppError::new(e)
-    })?;
+            AppError::new(e)
+        })?;
 
     let duration = start.elapsed().as_millis() as u64;
 
@@ -489,25 +506,14 @@ pub async fn sign_detached(
 
     // Get signing credentials
     let credentials = state.credentials.read().await;
-    if credentials.is_empty() {
-        return Err(AppError::new(SignError::Config(
-            "No signing credentials loaded".into(),
-        )));
-    }
-    let (cert_name, cred) = if let Some(ref ct) = cert_type {
-        credentials
-            .iter()
-            .find(|(name, _)| name == ct)
-            .ok_or_else(|| {
-                AppError::new(SignError::Config(format!("Certificate '{}' not found", ct)))
-            })?
-    } else {
-        let default_idx = *state.default_credential.read().await;
-        &credentials[default_idx]
-    };
-
-    // #9 fix: Enforce LDAP cert-group authorization
-    check_cert_authorization(user_info.as_ref().map(|e| &e.0), cert_name, &state.config)?;
+    let default_idx = *state.default_credential.read().await;
+    let (cert_name, cred) = resolve_and_authorize_credential(
+        &credentials,
+        default_idx,
+        cert_type.as_deref(),
+        user_info.as_ref().map(|e| &e.0),
+        &state.config,
+    )?;
 
     let tsa_config = if state.config.require_timestamp {
         Some(&state.config.tsa)
@@ -814,11 +820,22 @@ pub async fn verify_detached(
     })))
 }
 
+/// Bounded payload for POST /api/v1/report-issue.
+///
+/// `deny_unknown_fields` rejects arbitrary JSON keys and caps body size
+/// (the upload-limit layer still caps bytes-on-wire above this).
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReportIssueRequest {
+    pub title: String,
+    pub body: String,
+}
+
 /// POST /api/v1/report-issue — Submit a user issue report.
 pub async fn report_issue(
     State(state): State<Arc<AppState>>,
     axum::Extension(user_info): axum::Extension<UserInfo>,
-    Json(payload): Json<serde_json::Value>,
+    Json(payload): Json<ReportIssueRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     let reporter = match state.gh_reporter {
         Some(ref r) => r,
@@ -829,16 +846,9 @@ pub async fn report_issue(
         }
     };
 
-    let title = payload["title"]
-        .as_str()
-        .ok_or_else(|| AppError::new(SignError::Internal("Missing 'title' field".into())))?;
-    let body = payload["body"]
-        .as_str()
-        .ok_or_else(|| AppError::new(SignError::Internal("Missing 'body' field".into())))?;
-
-    // Sanitize: prevent markdown injection by escaping HTML
-    let clean_title = title.replace('<', "&lt;").replace('>', "&gt;");
-    let clean_body = body.replace('<', "&lt;").replace('>', "&gt;");
+    // Escape HTML + let create_user_report strip leading dashes / cap length.
+    let clean_title = payload.title.replace('<', "&lt;").replace('>', "&gt;");
+    let clean_body = payload.body.replace('<', "&lt;").replace('>', "&gt;");
 
     match reporter
         .create_user_report(&clean_title, &clean_body, Some(&user_info.username))
@@ -920,25 +930,14 @@ pub async fn sign_batch(
 
     // Get signing credentials
     let credentials = state.credentials.read().await;
-    if credentials.is_empty() {
-        return Err(AppError::new(SignError::Config(
-            "No signing credentials loaded".into(),
-        )));
-    }
-    let (cert_name, cred) = if let Some(ref ct) = cert_type {
-        credentials
-            .iter()
-            .find(|(name, _)| name == ct)
-            .ok_or_else(|| {
-                AppError::new(SignError::Config(format!("Certificate '{}' not found", ct)))
-            })?
-    } else {
-        let default_idx = *state.default_credential.read().await;
-        &credentials[default_idx]
-    };
-
-    // #9 fix: Enforce LDAP cert-group authorization
-    check_cert_authorization(user_info.as_ref().map(|e| &e.0), cert_name, &state.config)?;
+    let default_idx = *state.default_credential.read().await;
+    let (cert_name, cred) = resolve_and_authorize_credential(
+        &credentials,
+        default_idx,
+        cert_type.as_deref(),
+        user_info.as_ref().map(|e| &e.0),
+        &state.config,
+    )?;
 
     let tsa_config = if state.config.require_timestamp {
         Some(&state.config.tsa)
@@ -1096,16 +1095,8 @@ pub async fn sign_batch(
 
             std::fs::write(temp_input.path(), data).map_err(|e| AppError::new(SignError::Io(e)))?;
 
-            let batch_sign_options = crate::signer::SignOptions::default();
-
-            match crate::signer::sign_file_with_options(
-                temp_input.path(),
-                temp_output.path(),
-                cred,
-                tsa_config,
-                &batch_sign_options,
-            )
-            .await
+            match crate::signer::sign_file(temp_input.path(), temp_output.path(), cred, tsa_config)
+                .await
             {
                 Ok(result) => {
                     results.push(BatchResult {
@@ -1312,13 +1303,17 @@ pub async fn admin_reload(
 
     for cert_config in &state.config.cert_configs {
         let password = match std::env::var(&cert_config.pfx_password_env) {
-            Ok(p) => p,
+            Ok(p) => zeroize::Zeroizing::new(p),
             Err(_) => {
+                tracing::warn!(
+                    cert = %cert_config.name,
+                    env = %cert_config.pfx_password_env,
+                    "admin_reload: password env var not set"
+                );
                 return (
                     StatusCode::INTERNAL_SERVER_ERROR,
                     Json(serde_json::json!({
                         "error": "reload_failed",
-                        "message": format!("Environment variable '{}' not set", cert_config.pfx_password_env),
                     })),
                 )
                     .into_response();
@@ -1328,11 +1323,15 @@ pub async fn admin_reload(
         match crate::signer::SigningCredentials::from_pfx(&cert_config.pfx_path, &password) {
             Ok(cred) => new_credentials.push((cert_config.name.clone(), cred)),
             Err(e) => {
+                tracing::warn!(
+                    cert = %cert_config.name,
+                    error = %e,
+                    "admin_reload: failed to load cert"
+                );
                 return (
                     StatusCode::INTERNAL_SERVER_ERROR,
                     Json(serde_json::json!({
                         "error": "reload_failed",
-                        "message": format!("Failed to load '{}': {}", cert_config.name, e),
                     })),
                 )
                     .into_response();
@@ -1611,29 +1610,7 @@ mod tests {
     fn make_test_state(
         credentials: Vec<(String, crate::signer::SigningCredentials)>,
     ) -> Arc<AppState> {
-        let tmp = tempfile::NamedTempFile::new().expect("tempfile");
-        let audit_path = tmp.path().to_path_buf();
-        // Keep the NamedTempFile alive by leaking it for the test lifetime.
-        // In tests the process exits shortly after anyway.
-        std::mem::forget(tmp);
-
-        // dev_mode=true bypasses LDAP middleware in debug (test) builds.
-        let config = SignConfig {
-            dev_mode: true,
-            require_timestamp: false,
-            audit_log: audit_path.clone(),
-            ..SignConfig::default()
-        };
-
-        Arc::new(AppState {
-            config,
-            credentials: tokio::sync::RwLock::new(credentials),
-            default_credential: tokio::sync::RwLock::new(0),
-            audit: crate::web::audit::AuditLogger::new(&audit_path).expect("audit logger"),
-            started_at: std::time::Instant::now(),
-            stats: crate::web::SigningStats::default(),
-            gh_reporter: None,
-        })
+        make_test_state_full(credentials, SignConfig::default().max_upload_size)
     }
 
     /// Load the RSA-2048 test fixture credential.
@@ -1811,10 +1788,22 @@ mod tests {
     /// Build an [`AppState`] with a tiny `max_upload_size` so tests can exceed
     /// the limit without allocating huge buffers.
     fn make_test_state_with_max(max_upload_size: u64) -> Arc<AppState> {
+        make_test_state_full(vec![], max_upload_size)
+    }
+
+    /// Shared constructor for the two test-state helpers above. Tests should
+    /// call `make_test_state` or `make_test_state_with_max` directly.
+    fn make_test_state_full(
+        credentials: Vec<(String, crate::signer::SigningCredentials)>,
+        max_upload_size: u64,
+    ) -> Arc<AppState> {
         let tmp = tempfile::NamedTempFile::new().expect("tempfile");
         let audit_path = tmp.path().to_path_buf();
+        // Keep the NamedTempFile alive by leaking it for the test lifetime.
+        // In tests the process exits shortly after anyway.
         std::mem::forget(tmp);
 
+        // dev_mode=true bypasses LDAP middleware in debug (test) builds.
         let config = SignConfig {
             dev_mode: true,
             require_timestamp: false,
@@ -1825,7 +1814,7 @@ mod tests {
 
         Arc::new(AppState {
             config,
-            credentials: tokio::sync::RwLock::new(vec![]),
+            credentials: tokio::sync::RwLock::new(credentials),
             default_credential: tokio::sync::RwLock::new(0),
             audit: crate::web::audit::AuditLogger::new(&audit_path).expect("audit logger"),
             started_at: std::time::Instant::now(),

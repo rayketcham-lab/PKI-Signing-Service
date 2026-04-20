@@ -27,7 +27,7 @@ use std::io::{Cursor, Read, Seek, Write};
 
 use crate::error::{SignError, SignResult};
 use crate::pkcs7::Pkcs7Builder;
-use crate::signer::{SignOptions, SigningCredentials};
+use crate::signer::SigningCredentials;
 use crate::timestamp::TsaConfig;
 
 /// Stream name for the Authenticode digital signature.
@@ -181,7 +181,6 @@ pub async fn sign_msi(
     data: &[u8],
     credentials: &SigningCredentials,
     tsa_config: Option<&TsaConfig>,
-    _options: &SignOptions,
 ) -> SignResult<MsiSignResult> {
     // Check if already signed
     {

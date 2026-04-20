@@ -10,6 +10,33 @@ use std::time::Instant;
 
 use sha2::{Digest, Sha256};
 
+/// Argv-safety caps for values passed to `gh issue create`.
+///
+/// `gh` has no `--` terminator for its flag/value pairs, so a value starting
+/// with `-` is parsed as an option flag. A title of `--label release-block`
+/// or `--body-file /etc/passwd` would mutate the issue or exfiltrate files.
+/// These caps also bound the DoS surface of unbounded JSON bodies.
+const GH_TITLE_MAX: usize = 256;
+const GH_BODY_MAX: usize = 64 * 1024;
+const GH_REPORTER_MAX: usize = 128;
+
+/// Sanitize a value destined for a `gh` argv flag.
+///
+/// - Strips leading `-` / whitespace so the value can never be parsed as a flag.
+/// - Truncates at `max` bytes on a char boundary.
+/// - Returns `None` if the value is empty after stripping.
+pub(crate) fn sanitize_gh_arg(value: &str, max: usize) -> Option<String> {
+    let stripped = value.trim_start_matches(|c: char| c == '-' || c.is_whitespace());
+    if stripped.is_empty() {
+        return None;
+    }
+    let mut end = stripped.len().min(max);
+    while !stripped.is_char_boundary(end) {
+        end -= 1;
+    }
+    Some(stripped[..end].to_string())
+}
+
 /// Automatic GitHub issue reporter.
 pub struct GitHubIssueReporter {
     /// GitHub repository in "owner/repo" format.
@@ -144,11 +171,18 @@ impl GitHubIssueReporter {
         body: &str,
         reporter: Option<&str>,
     ) -> Result<String, String> {
+        let safe_title = sanitize_gh_arg(title, GH_TITLE_MAX)
+            .ok_or_else(|| "title is empty or contains only leading dashes".to_string())?;
+        let safe_body = sanitize_gh_arg(body, GH_BODY_MAX)
+            .ok_or_else(|| "body is empty or contains only leading dashes".to_string())?;
+        let safe_reporter = reporter
+            .and_then(|r| sanitize_gh_arg(r, GH_REPORTER_MAX))
+            .unwrap_or_else(|| "anonymous".to_string());
+
         let full_body = format!(
-            "{body}\n\n---\n\
-             *Reported by: {}*\n\
+            "{safe_body}\n\n---\n\
+             *Reported by: {safe_reporter}*\n\
              *Submitted via PKI Signing Service issue reporter.*",
-            reporter.unwrap_or("anonymous"),
         );
 
         let output = tokio::process::Command::new("gh")
@@ -157,7 +191,7 @@ impl GitHubIssueReporter {
             .arg("--repo")
             .arg(&self.repo)
             .arg("--title")
-            .arg(title)
+            .arg(&safe_title)
             .arg("--body")
             .arg(&full_body)
             .arg("--label")
@@ -304,6 +338,54 @@ mod tests {
         let safe_type = "InvalidPe";
         let title = format!("[auto] Signing error: {}", safe_type);
         assert_eq!(title, "[auto] Signing error: InvalidPe");
+    }
+
+    #[test]
+    fn test_sanitize_gh_arg_rejects_leading_dash() {
+        // SecOps HIGH — title starting with -- would be parsed as flag by gh CLI.
+        assert_eq!(
+            sanitize_gh_arg("--label release-block", 256),
+            Some("label release-block".to_string()),
+        );
+        assert_eq!(
+            sanitize_gh_arg("-body-file /etc/passwd", 256),
+            Some("body-file /etc/passwd".to_string()),
+        );
+        // Leading whitespace + dashes both stripped.
+        assert_eq!(
+            sanitize_gh_arg("   -- inject", 256),
+            Some("inject".to_string()),
+        );
+    }
+
+    #[test]
+    fn test_sanitize_gh_arg_returns_none_when_all_dashes() {
+        assert_eq!(sanitize_gh_arg("---", 256), None);
+        assert_eq!(sanitize_gh_arg("", 256), None);
+        assert_eq!(sanitize_gh_arg("   ", 256), None);
+    }
+
+    #[test]
+    fn test_sanitize_gh_arg_preserves_normal_input() {
+        assert_eq!(
+            sanitize_gh_arg("Normal title with dashes - inline", 256),
+            Some("Normal title with dashes - inline".to_string()),
+        );
+    }
+
+    #[test]
+    fn test_sanitize_gh_arg_truncates_at_max() {
+        let long = "a".repeat(500);
+        let out = sanitize_gh_arg(&long, 256).unwrap();
+        assert_eq!(out.len(), 256);
+    }
+
+    #[test]
+    fn test_sanitize_gh_arg_respects_char_boundary() {
+        // Truncation must not split a multi-byte UTF-8 char.
+        let mixed = format!("{}é", "a".repeat(254));
+        let out = sanitize_gh_arg(&mixed, 255).unwrap();
+        assert!(out.is_char_boundary(out.len()));
     }
 
     #[test]

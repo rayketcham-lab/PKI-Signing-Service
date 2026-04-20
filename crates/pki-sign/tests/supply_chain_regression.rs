@@ -124,3 +124,75 @@ fn rustls_at_or_above_security_floor() {
          would pair with an older rustls-webpki and revert audited hardening"
     );
 }
+
+/// deny.toml ignores RUSTSEC-2023-0071 (rsa Marvin timing sidechannel) on the
+/// justification that v0.6.0 deleted the entire CMS EnvelopedData / OAEP
+/// surface. This test grepscans the `pki-sign` source tree and fails CI if
+/// any `oaep_decrypt` fn, `Oaep` import, or `pkcs7::enveloped` reference
+/// leaks back in. The advisory ignore is only sound while this invariant
+/// holds.
+#[test]
+fn rsa_no_oaep_decrypt_reachable_from_web() {
+    let mut src_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    src_root.push("src");
+    assert!(
+        src_root.is_dir(),
+        "expected {} to be a directory",
+        src_root.display()
+    );
+
+    let forbidden: &[&str] = &[
+        "oaep_decrypt",
+        "rsa::Oaep",
+        "rsa::oaep::",
+        "pkcs7::enveloped",
+        "crypto::rsa_oaep",
+        "crypto::hkdf",
+        "crypto::kem",
+    ];
+
+    let mut offenders: Vec<(PathBuf, String, String)> = Vec::new();
+    walk_rs_files(&src_root, &mut |path| {
+        let content = match std::fs::read_to_string(path) {
+            Ok(c) => c,
+            Err(_) => return,
+        };
+        for (lineno, line) in content.lines().enumerate() {
+            let trimmed = line.trim_start();
+            if trimmed.starts_with("//") {
+                continue;
+            }
+            for needle in forbidden {
+                if line.contains(needle) {
+                    offenders.push((
+                        path.to_path_buf(),
+                        needle.to_string(),
+                        format!("line {}: {}", lineno + 1, line.trim()),
+                    ));
+                }
+            }
+        }
+    });
+
+    assert!(
+        offenders.is_empty(),
+        "RUSTSEC-2023-0071 ignore invariant broken: OAEP / EnvelopedData surface \
+         resurfaced in production code. Either re-gate the advisory or remove \
+         these references. Offenders: {offenders:#?}"
+    );
+}
+
+fn walk_rs_files(dir: &std::path::Path, visit: &mut dyn FnMut(&std::path::Path)) {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(_) => return,
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            walk_rs_files(&path, visit);
+        } else if path.extension().and_then(|e| e.to_str()) == Some("rs") {
+            visit(&path);
+        }
+    }
+}

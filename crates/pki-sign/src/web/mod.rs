@@ -225,7 +225,7 @@ pub async fn run_server(config: SignConfig) -> Result<(), Box<dyn std::error::Er
     let mut credentials = Vec::new();
     for cert_config in &config.cert_configs {
         let password = match std::env::var(&cert_config.pfx_password_env) {
-            Ok(p) => p,
+            Ok(p) => zeroize::Zeroizing::new(p),
             Err(_) => {
                 tracing::warn!(
                     cert = %cert_config.name,

@@ -429,43 +429,15 @@ pub struct DetachedSignResult {
     pub p7s_hash: String,
 }
 
-/// Options controlling signing behavior.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct SignOptions {
-    /// Reserved for future use. Re-signing is always rejected — existing
-    /// signatures are never stripped.
-    _private: (),
-}
-
 /// Sign a file using Authenticode.
 ///
-/// This is the main entry point for signing operations.
+/// This is the main entry point for signing operations. Already-signed files
+/// are always rejected — existing signatures are never stripped.
 pub async fn sign_file(
     input_path: &Path,
     output_path: &Path,
     credentials: &SigningCredentials,
     tsa_config: Option<&TsaConfig>,
-) -> SignResult<SigningResult> {
-    sign_file_with_options(
-        input_path,
-        output_path,
-        credentials,
-        tsa_config,
-        &SignOptions::default(),
-    )
-    .await
-}
-
-/// Sign a file using Authenticode, with configurable options.
-///
-/// When `options.allow_resign` is true, already-signed files are stripped
-/// and re-signed instead of being rejected.
-pub async fn sign_file_with_options(
-    input_path: &Path,
-    output_path: &Path,
-    credentials: &SigningCredentials,
-    tsa_config: Option<&TsaConfig>,
-    options: &SignOptions,
 ) -> SignResult<SigningResult> {
     let file_type = FileType::from_extension(input_path)?;
 
@@ -474,7 +446,7 @@ pub async fn sign_file_with_options(
 
     match file_type {
         FileType::Pe => {
-            let result = sign_pe(&data, credentials, tsa_config, options).await?;
+            let result = sign_pe(&data, credentials, tsa_config).await?;
             let signed_hash = hex::encode(Sha256::digest(&result.signed_data));
 
             // Write output
@@ -488,10 +460,10 @@ pub async fn sign_file_with_options(
             })
         }
         FileType::PowerShell => {
-            crate::powershell::sign_ps1(&data, output_path, credentials, tsa_config, options).await
+            crate::powershell::sign_ps1(&data, output_path, credentials, tsa_config).await
         }
         FileType::Msi => {
-            let result = crate::msi::sign_msi(&data, credentials, tsa_config, options).await?;
+            let result = crate::msi::sign_msi(&data, credentials, tsa_config).await?;
             let signed_hash = hex::encode(Sha256::digest(&result.signed_data));
 
             std::fs::write(output_path, &result.signed_data)?;
@@ -504,7 +476,7 @@ pub async fn sign_file_with_options(
             })
         }
         FileType::Cab => {
-            let result = crate::cab::sign_cab(&data, credentials, tsa_config, options).await?;
+            let result = crate::cab::sign_cab(&data, credentials, tsa_config).await?;
             let signed_hash = hex::encode(Sha256::digest(&result.signed_data));
 
             std::fs::write(output_path, &result.signed_data)?;
@@ -891,7 +863,6 @@ async fn sign_pe(
     data: &[u8],
     credentials: &SigningCredentials,
     tsa_config: Option<&TsaConfig>,
-    _options: &SignOptions,
 ) -> SignResult<PeSignResult> {
     // Parse PE headers (on original data to check if signed)
     let pe_info_orig = pe::PeInfo::parse(data)?;
@@ -3858,7 +3829,7 @@ mod tests {
         let cab_data = build_interop_test_cab(128);
 
         // Sign the CAB with pki-sign
-        let sign_result = crate::cab::sign_cab(&cab_data, &creds, None, &SignOptions::default())
+        let sign_result = crate::cab::sign_cab(&cab_data, &creds, None)
             .await
             .expect("sign_cab should succeed");
 
@@ -3923,7 +3894,7 @@ mod tests {
 
         let cab_data = build_interop_test_cab(128);
 
-        let sign_result = crate::cab::sign_cab(&cab_data, &creds, None, &SignOptions::default())
+        let sign_result = crate::cab::sign_cab(&cab_data, &creds, None)
             .await
             .expect("sign_cab ECDSA-P256 should succeed");
 
@@ -4079,7 +4050,7 @@ mod tests {
         let msi_data = build_interop_test_msi();
 
         // Sign with pki-sign
-        let sign_result = crate::msi::sign_msi(&msi_data, &creds, None, &SignOptions::default())
+        let sign_result = crate::msi::sign_msi(&msi_data, &creds, None)
             .await
             .expect("sign_msi should succeed");
 

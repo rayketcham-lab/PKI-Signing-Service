@@ -39,22 +39,72 @@ impl IntoResponse for AppError {
     fn into_response(self) -> axum::response::Response {
         use axum::http::StatusCode;
 
-        let (status, code) = match &self.error {
-            SignError::InvalidPe(_) => (StatusCode::BAD_REQUEST, "invalid_pe"),
-            SignError::AlreadySigned(_) => (StatusCode::BAD_REQUEST, "already_signed"),
-            SignError::UnsupportedFileType(_) => {
-                (StatusCode::UNSUPPORTED_MEDIA_TYPE, "unsupported_type")
+        // 4xx: message echoes detail so the client can fix their request.
+        // 5xx: canned message only — internal detail is logged server-side,
+        // never placed on the wire (paths, env-var names, reqwest URLs, TSA
+        // response bodies, PFX loader errors all surface via `Config`/`Io`/
+        // `Internal`/`Certificate`/`Timestamp` strings otherwise).
+        let (status, code, public_message) = match &self.error {
+            SignError::InvalidPe(_) => (
+                StatusCode::BAD_REQUEST,
+                "invalid_pe",
+                self.error.to_string(),
+            ),
+            SignError::AlreadySigned(_) => (
+                StatusCode::BAD_REQUEST,
+                "already_signed",
+                self.error.to_string(),
+            ),
+            SignError::UnsupportedFileType(_) => (
+                StatusCode::UNSUPPORTED_MEDIA_TYPE,
+                "unsupported_type",
+                self.error.to_string(),
+            ),
+            SignError::FileTooLarge { .. } => (
+                StatusCode::PAYLOAD_TOO_LARGE,
+                "file_too_large",
+                self.error.to_string(),
+            ),
+            // Return 404 for auth failures to prevent endpoint enumeration;
+            // body must not reveal the real reason.
+            SignError::Unauthorized(_) => {
+                (StatusCode::NOT_FOUND, "not_found", "Not Found".to_string())
             }
-            SignError::FileTooLarge { .. } => (StatusCode::PAYLOAD_TOO_LARGE, "file_too_large"),
-            SignError::Config(_) => (StatusCode::INTERNAL_SERVER_ERROR, "config_error"),
-            // Return 404 for auth failures to prevent endpoint enumeration
-            SignError::Unauthorized(_) => (StatusCode::NOT_FOUND, "not_found"),
-            _ => (StatusCode::INTERNAL_SERVER_ERROR, "internal_error"),
+            SignError::Config(_) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "config_error",
+                "Server configuration error".to_string(),
+            ),
+            SignError::Certificate(_) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "certificate_error",
+                "Certificate error".to_string(),
+            ),
+            SignError::Timestamp(_) | SignError::AllTsaFailed => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "timestamp_error",
+                "Timestamp authority error".to_string(),
+            ),
+            _ => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "internal_error",
+                "Internal server error".to_string(),
+            ),
         };
+
+        // Log the full error chain server-side with the request_id so operators
+        // can correlate without exposing it to the wire.
+        if status.is_server_error() {
+            tracing::warn!(
+                request_id = %self.request_id,
+                error = %self.error,
+                "request failed with 5xx"
+            );
+        }
 
         let body = serde_json::json!({
             "error": code,
-            "message": self.error.to_string(),
+            "message": public_message,
             "request_id": self.request_id.to_string(),
         });
 
@@ -193,6 +243,95 @@ mod tests {
         let err1 = AppError::new(SignError::Internal("a".into()));
         let err2 = AppError::new(SignError::Internal("a".into()));
         assert_ne!(err1.request_id, err2.request_id);
+    }
+
+    async fn body_string(response: axum::response::Response) -> String {
+        use http_body_util::BodyExt;
+        let bytes = response.into_body().collect().await.unwrap().to_bytes();
+        String::from_utf8(bytes.to_vec()).unwrap()
+    }
+
+    #[tokio::test]
+    async fn test_config_error_body_does_not_leak_internal_string() {
+        // SecOps HIGH — `Config` strings often embed env-var names and paths.
+        let app_err = AppError::new(SignError::Config(
+            "Environment variable 'PFX_PASSWORD_PROD' not set".into(),
+        ));
+        let response = app_err.into_response();
+        let body = body_string(response).await;
+        assert!(
+            !body.contains("PFX_PASSWORD_PROD"),
+            "Config error body must not echo env-var names: {body}"
+        );
+        assert!(body.contains("Server configuration error"));
+    }
+
+    #[tokio::test]
+    async fn test_certificate_error_body_does_not_leak_path() {
+        let app_err = AppError::new(SignError::Certificate(
+            "Failed to load /etc/pki-sign/certs/prod.pfx: MAC verification failed".into(),
+        ));
+        let response = app_err.into_response();
+        let body = body_string(response).await;
+        assert!(
+            !body.contains("/etc/pki-sign"),
+            "Certificate error body must not echo filesystem paths: {body}"
+        );
+        assert!(
+            !body.contains("MAC verification"),
+            "Certificate error body must not reveal cryptographic failure mode: {body}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_timestamp_error_body_does_not_leak_tsa_url() {
+        let app_err = AppError::new(SignError::Timestamp(
+            "HTTP request failed: https://tsa.internal.corp:8443/tsa returned 502".into(),
+        ));
+        let response = app_err.into_response();
+        let body = body_string(response).await;
+        assert!(
+            !body.contains("tsa.internal.corp"),
+            "Timestamp error body must not echo internal TSA URLs: {body}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_internal_error_body_does_not_leak_message() {
+        let app_err = AppError::new(SignError::Internal(
+            "panic at signer.rs:1234 — stack contained /home/claude/secrets".into(),
+        ));
+        let response = app_err.into_response();
+        let body = body_string(response).await;
+        assert!(
+            !body.contains("/home/claude"),
+            "Internal error body must not echo internal paths: {body}"
+        );
+        assert!(
+            !body.contains("signer.rs"),
+            "Internal error body must not echo source locations: {body}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_unauthorized_body_does_not_reveal_reason() {
+        // Must not tell the client WHY auth failed — just that the thing isn't here.
+        let app_err = AppError::new(SignError::Unauthorized(
+            "LDAP bind failed for user 'admin'".into(),
+        ));
+        let response = app_err.into_response();
+        let body = body_string(response).await;
+        assert!(!body.contains("LDAP"));
+        assert!(!body.contains("admin"));
+    }
+
+    #[tokio::test]
+    async fn test_invalid_pe_body_echoes_detail_for_client() {
+        // 4xx must preserve the specific reason so the client can fix the request.
+        let app_err = AppError::new(SignError::InvalidPe("truncated DOS header".into()));
+        let response = app_err.into_response();
+        let body = body_string(response).await;
+        assert!(body.contains("truncated DOS header"));
     }
 
     #[test]

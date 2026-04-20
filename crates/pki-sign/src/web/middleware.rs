@@ -256,6 +256,21 @@ pub async fn csrf_origin_middleware(
         .get(header::HOST)
         .and_then(|v| v.to_str().ok());
 
+    // Admin state-changing routes require an Origin header outright. Browser
+    // attacks that forge POSTs via `<form>` submission don't always include
+    // Origin, and admin endpoints are the highest-impact pivot — rejecting
+    // the `Origin: None` case here forecloses that browser-CSRF path without
+    // affecting non-browser admin tooling (which can set Origin explicitly).
+    let path = request.uri().path();
+    if origin.is_none() && path.starts_with("/admin/") {
+        tracing::warn!(
+            path = path,
+            method = %method,
+            "CSRF guard rejected admin state-change: Origin header missing"
+        );
+        return not_found_response();
+    }
+
     if origin_is_allowed(origin, host, &state.config.trusted_origins) {
         return next.run(request).await;
     }

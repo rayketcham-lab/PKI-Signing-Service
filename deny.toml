@@ -8,10 +8,15 @@
 [advisories]
 # Ignore specific advisories (with justification)
 ignore = [
-    # RSA timing sidechannel — oaep_decrypt exists in crypto/rsa_oaep.rs for CMS EnvelopedData
-    # key transport, but is NOT reachable from any web handler (verified by security regression
-    # test test_security_regression_oaep_decrypt_not_web_reachable). No upstream fix available.
-    { id = "RUSTSEC-2023-0071", reason = "rsa Marvin attack: oaep_decrypt exists for CMS EnvelopedData but is not network-reachable (verified by test)" },
+    # RSA Marvin timing sidechannel — v0.6.0 deleted the entire CMS EnvelopedData /
+    # OAEP surface (`crypto/rsa_oaep.rs`, `pkcs7/enveloped.rs`, `pkcs7/kem.rs`).
+    # The `rsa` crate is now used only for PKCS#1v1.5 *signing* (`signer.rs:14-15`,
+    # `tsa_http.rs:26-27`) and for `RsaPrivateKey::from_pkcs8_pem` inside PFX
+    # load; there is no OAEP decrypt path in the dep graph. The
+    # `tests/supply_chain_regression.rs::rsa_no_oaep_decrypt_reachable_from_web`
+    # test greps the compiled binary / source tree for any `oaep_decrypt` or
+    # `Oaep` symbol reference, failing CI if one comes back.
+    { id = "RUSTSEC-2023-0071", reason = "rsa Marvin attack: OAEP surface deleted in v0.6.0; only PKCS#1v1.5 signing remains (verified by supply_chain_regression.rs)" },
     # ml-dsa is now feature-gated behind `pq-experimental` (gh #72). Default
     # builds do not resolve the crate (asserted by
     # tests/pq_feature_gate.rs::default_build_cargo_tree_omits_ml_dsa), but

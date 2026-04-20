@@ -51,7 +51,7 @@ use sha2::{Digest, Sha256};
 
 use crate::error::{SignError, SignResult};
 use crate::pkcs7::Pkcs7Builder;
-use crate::signer::{SignOptions, SigningCredentials};
+use crate::signer::SigningCredentials;
 use crate::timestamp::TsaConfig;
 
 /// Magic bytes for a cabinet file: "MSCF"
@@ -276,7 +276,6 @@ pub async fn sign_cab(
     data: &[u8],
     credentials: &SigningCredentials,
     tsa_config: Option<&TsaConfig>,
-    _options: &SignOptions,
 ) -> SignResult<CabSignResult> {
     let cab_info = parse_cab_header(data)?;
 
