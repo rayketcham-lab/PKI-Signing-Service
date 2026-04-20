@@ -118,6 +118,10 @@ assert_cmd = { workspace = true }
 predicates = { workspace = true }
 tower = { version = "0.5", features = ["util", "limit"] }
 http-body-util = "0.1"
+# Real streaming bodies in body-limit regression tests (#74) — exercises the
+# `RequestBodyLimitLayer` byte-count path that `Body::from(Vec<u8>)` (a Full
+# body) cannot, since Full pre-buffers and short-circuits via Content-Length.
+futures-util = { version = "0.3", default-features = false, features = ["alloc"] }
 
 [[bin]]
 name = "pki-sign"

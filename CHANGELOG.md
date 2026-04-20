@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `test_sign_streaming_chunked_oversized_rejected` — exercises the real
+  `RequestBodyLimitLayer` byte-count path with `Body::from_stream` + explicit
+  `Transfer-Encoding: chunked` header. The existing
+  `test_sign_oversized_no_content_length_rejected` hits the multipart-extractor
+  fallback via `Body::from(Vec<u8>)` (a `Full` body that short-circuits with a
+  synthesized Content-Length); the new test closes that gap.
+- `test_sign_boundary_framing_oversized_rejected` — multipart with long
+  boundary strings whose framing bytes alone push the request past
+  `max_upload_size`, asserting 413 on framing-dominated uploads.
+
 ## [0.6.0] - 2026-04-19
 
 ### Removed

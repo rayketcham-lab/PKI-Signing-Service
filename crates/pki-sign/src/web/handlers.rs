@@ -2013,6 +2013,102 @@ mod tests {
         );
     }
 
+    /// True streaming-body regression test (#74). The earlier
+    /// `test_sign_oversized_no_content_length_rejected` uses
+    /// `axum::body::Body::from(Vec<u8>)` which internally wraps a pre-buffered
+    /// `Full` body — the tower-http limit layer sees the whole byte count up
+    /// front. This test feeds a chunked `Body::from_stream` so the layer must
+    /// enforce the limit by counting bytes as they are polled, which is the
+    /// actual threat model for chunked/Transfer-Encoding uploads on the wire.
+    ///
+    /// Also sets `Transfer-Encoding: chunked` explicitly to document the
+    /// wire-level scenario being simulated.
+    #[tokio::test]
+    async fn test_sign_streaming_chunked_oversized_rejected() {
+        use futures_util::stream;
+        use tower::ServiceExt as _;
+
+        let max = 1024u64;
+        let state = make_test_state_with_max(max);
+        let router = crate::web::build_router(state);
+
+        // 4× the limit, split into 8 chunks of `max / 2` bytes each so the
+        // limit trips *mid-stream* on the second chunk rather than on the
+        // first poll.
+        let chunk_size = (max as usize) / 2;
+        let chunk_count = 8usize;
+        let oversized = vec![0xCDu8; chunk_size * chunk_count];
+        let (ct, body_bytes) = build_multipart_with_file("big.exe", &oversized);
+
+        let chunks: Vec<Result<axum::body::Bytes, std::io::Error>> = body_bytes
+            .chunks(chunk_size)
+            .map(|c| Ok(axum::body::Bytes::copy_from_slice(c)))
+            .collect();
+        let stream_body = axum::body::Body::from_stream(stream::iter(chunks));
+
+        let request = axum::http::Request::builder()
+            .method("POST")
+            .uri("/api/v1/sign")
+            .header(axum::http::header::CONTENT_TYPE, ct)
+            .header(axum::http::header::TRANSFER_ENCODING, "chunked")
+            // Deliberately NO Content-Length — chunked TE path.
+            .body(stream_body)
+            .unwrap();
+
+        let resp = router.oneshot(request).await.unwrap();
+        assert_eq!(
+            resp.status(),
+            axum::http::StatusCode::PAYLOAD_TOO_LARGE,
+            "streaming chunked oversized body must return 413, got {}",
+            resp.status()
+        );
+    }
+
+    /// Boundary-string adversarial test (#74): a multipart body whose
+    /// boundary-marker lines alone push the total over the limit must still
+    /// be rejected with 413, even if the declared `file` payload is small.
+    /// Catches a regression where limit enforcement only counts `file` bytes
+    /// and not the framing overhead.
+    #[tokio::test]
+    async fn test_sign_boundary_framing_oversized_rejected() {
+        // Tiny limit so just the multipart boundary headers + a modest
+        // payload already exceed it.
+        let max = 128u64;
+        let state = make_test_state_with_max(max);
+
+        // ~3× the limit worth of body, dominated by boundary/header framing
+        // for many small file parts. build_multipart_with_file only produces
+        // one part; we manually construct many parts to inflate framing.
+        let boundary = "X".repeat(40); // long boundary inflates per-part cost
+        let ct = format!("multipart/form-data; boundary={boundary}");
+        let mut body = Vec::new();
+        for i in 0..6 {
+            body.extend_from_slice(format!("--{boundary}\r\n").as_bytes());
+            body.extend_from_slice(
+                format!("Content-Disposition: form-data; name=\"f{i}\"; filename=\"f{i}.bin\"\r\n")
+                    .as_bytes(),
+            );
+            body.extend_from_slice(b"Content-Type: application/octet-stream\r\n\r\n");
+            body.extend_from_slice(b"tiny"); // payload is negligible
+            body.extend_from_slice(b"\r\n");
+        }
+        body.extend_from_slice(format!("--{boundary}--\r\n").as_bytes());
+        assert!(
+            body.len() as u64 > max,
+            "test body must exceed the limit; got {} vs max {}",
+            body.len(),
+            max
+        );
+
+        let resp = post_raw(state, "/api/v1/sign", &ct, body).await;
+        assert_eq!(
+            resp.status(),
+            axum::http::StatusCode::PAYLOAD_TOO_LARGE,
+            "boundary-framing oversized body must return 413, got {}",
+            resp.status()
+        );
+    }
+
     fn make_user(groups: Vec<String>, is_admin: bool) -> UserInfo {
         let config = LdapConfig {
             cert_groups: [("server".into(), "cn=server-signers".into())]

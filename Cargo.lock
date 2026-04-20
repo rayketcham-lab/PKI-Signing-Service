@@ -2051,6 +2051,7 @@ dependencies = [
  "der",
  "dialoguer",
  "ed25519-dalek",
+ "futures-util",
  "goblin",
  "hex",
  "http-body-util",
