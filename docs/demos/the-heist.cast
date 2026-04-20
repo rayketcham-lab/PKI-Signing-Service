@@ -23,7 +23,7 @@
 [3.29, "o", "e"]
 [3.36, "o", "\r\n"]
 [3.6, "o", "  Opening signed.exe in hex editor...\r\n"]
-[3.8, "o", "  Offset 0x00004800: \u001b[2m41 63 6D 65 43 6F 72 70\u001b[0m  AcmeCorp\r\n"]
+[3.8, "o", "  Offset 0x00004800: \u001b[2m51 75 61 6E 74 75 6D 4E\u001b[0m  QuantumN\r\n"]
 [4.0, "o", "  \u001b[1;31mPatching offset 0x00004800...\u001b[0m\r\n"]
 [4.2, "o", "  \u001b[1;31mWriting: 43 68 61 64 57 61 73 48\u001b[0m  ChadWasH\r\n"]
 [4.4, "o", "  \u001b[1;31mWriting: 65 72 65 00 00 00 00 00\u001b[0m  ere.....\r\n"]

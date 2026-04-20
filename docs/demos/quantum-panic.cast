@@ -101,7 +101,7 @@
 [11.5, "o", "\r\n"]
 [11.7, "o", "\u001b[1;32m✔ Signed successfully (post-quantum)\u001b[0m\r\n"]
 [11.9, "o", "  Output    : app.pqc.exe\r\n"]
-[12.1, "o", "  Signer    : CN=Corp PQC Signing CA, O=Acme Corp\r\n"]
+[12.1, "o", "  Signer    : CN=Corp PQC Signing CA, O=QuantumNexum\r\n"]
 [12.3, "o", "  \u001b[1;32mAlgorithm  : ML-DSA-65 (NIST FIPS 204) — quantum-resistant\u001b[0m\r\n"]
 [12.5, "o", "  Hash      : SHA-512\r\n"]
 [12.7, "o", "  Sig size  : 3309 bytes\r\n"]
