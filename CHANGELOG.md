@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+- **Canned 5xx error bodies with `request_id` correlation** (`web/error.rs`) — 5xx responses no longer leak internal error strings to clients; structured server-side `tracing::warn!` retains the detail with request_id for log correlation.
+- **argv sanitization on `gh` issue-creation path** (`web/gh_issues.rs`) — defense-in-depth against argv-injection on the `POST /api/v1/report-issue` → `gh issue create` pipeline.
+- **CSRF Origin guard hardened** (`web/middleware.rs`) — `/admin/*` now rejects requests with *no* `Origin` header (tighter than the `/api/v1/*` same-origin fallback); admin endpoints are browser-only.
+- **PFX password wrapped in `Zeroizing<String>`** (`web/mod.rs`) — password memory is scrubbed on drop, matching the existing private-key zeroization posture.
+- **Bounded JSON on `POST /api/v1/report-issue`** — `serde(deny_unknown_fields)` rejects unexpected fields; payload size bounded by the global body-limit.
+- **OAEP-decrypt reachability regression test** (`tests/supply_chain_regression.rs`) — asserts no code path in `web/` reaches the `rsa` crate's OAEP decrypt surface (RUSTSEC-2023-0071 Marvin attack — not exploitable here since v0.6.0 dropped CMS EnvelopedData, but test pins the invariant).
+- **`daily-health.yml` audit-ignore alignment** — added `RUSTSEC-2026-0097` to match `deny.toml` / `release.yml` / `ci.yml`; prevents scheduled-audit churn after the `rand` pin.
+
+### Changed
+- **Credential-lookup helper extracted** — `resolve_and_authorize_credential()` in `web/handlers.rs` collapses three duplicated ~20-line blocks across `sign_file` / `sign_detached` / `sign_batch`.
+- **`SignOptions` phantom type deleted** — the struct had a single private zero-sized field and was never meaningfully parameterized; `sign_file_with_options` wrapper and `_options: &SignOptions` params removed from `sign_pe` / `sign_cab` / `sign_msi` / `sign_ps1`.
+- **Test-state helper merge** — `make_test_state` / `make_test_state_with_max` now delegate to a shared `make_test_state_full`.
+
 ### Added
 - `test_sign_streaming_chunked_oversized_rejected` — exercises the real
   `RequestBodyLimitLayer` byte-count path with `Body::from_stream` + explicit

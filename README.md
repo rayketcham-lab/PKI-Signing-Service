@@ -494,7 +494,10 @@ COMMANDS:
 
 - **No OpenSSL** --- Pure Rust crypto stack (`rsa`, `p256`, `p384`, `p521`, `ed25519-dalek`, `sha2`, `aes-gcm`; `ml-dsa` only with `--features pq-experimental`). TLS via `rustls` with `aws-lc-rs` backend.
 - **OpenSSL banned** --- `cargo-deny` blocks `openssl`, `openssl-sys`, and `native-tls` crate usage.
-- **Key zeroization** --- Private keys wrapped in `Zeroizing<>` for secure memory cleanup.
+- **Key + password zeroization** --- Private keys and PFX passwords wrapped in `Zeroizing<>` for secure memory cleanup on drop.
+- **No error-body leakage** --- 5xx responses return canned bodies; internal error strings stay in server-side `tracing` logs keyed by `request_id`.
+- **argv-injection hardening** --- `POST /api/v1/report-issue` shell-out to `gh issue create` uses an allowlist-sanitized argv, not string concatenation.
+- **Bounded JSON** --- admin/report endpoints use `serde(deny_unknown_fields)` with payload size bounded by the global body-limit.
 - **Audit trail** --- Every sign/verify operation logged with request ID, file hash, signer, client IP, timestamp status, and duration.
 - **Auth modes** --- None (dev), LDAP header pass-through, mTLS, API key.
 - **Security headers + CSP** --- Applied via middleware on all responses; fail-closed auth middleware.
