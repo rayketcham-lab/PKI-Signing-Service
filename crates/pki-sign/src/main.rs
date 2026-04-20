@@ -141,6 +141,10 @@ enum Commands {
         prefix: PathBuf,
     },
 
+    /// Run an end-to-end sign + verify demo against a bundled throwaway cert
+    #[cfg(feature = "demo")]
+    Demo,
+
     /// Time-Stamp Authority (RFC 3161) server commands
     Tsa {
         #[command(subcommand)]
@@ -471,6 +475,17 @@ fn main() {
             eprintln!("Setup wizard (prefix: {})", prefix.display());
             eprintln!("Setup wizard not yet implemented");
             std::process::exit(1);
+        }
+        #[cfg(feature = "demo")]
+        Commands::Demo => {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+            if let Err(e) = rt.block_on(pki_sign::demo::run()) {
+                eprintln!("demo failed: {e:#}");
+                std::process::exit(1);
+            }
         }
         Commands::Tsa { command } => match command {
             TsaCommands::Serve {

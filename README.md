@@ -8,7 +8,7 @@ No OpenSSL. No `signtool.exe`. No external dependencies. One binary.
 
 <p align="center">
   <a href="https://rayketcham-lab.github.io/PKI-Signing-Service/demo.html">
-    <img src="docs/demos/speed-run.svg" alt="pki-sign demo — sign and verify a batch of Windows binaries in under 10s" width="800">
+    <img src="docs/demos/speed-run.svg" alt="pki-sign demo — sign five Windows formats (PE, CAB, MSI, PS1, detached CMS) on Linux from one static binary, with the full chain of proof" width="800">
   </a>
   <br>
   <em>▶ <a href="https://rayketcham-lab.github.io/PKI-Signing-Service/demo.html">Watch the full demo suite (6 scripted casts)</a></em>

@@ -4215,4 +4215,85 @@ mod tests {
     }
 
     // ─── Debug: dump raw CAB signature for osslsigncode diagnosis ───
+
+    /// Reproducible timing receipt for the `speed-run.cast` demo.
+    ///
+    /// Signs a minimal PE, CAB, MSI, PS1, and detached CMS target with the
+    /// bundled RSA-2048 PFX, printing the measured wall-clock time for each.
+    /// Run with:
+    ///   cargo test --release -p pki-sign -- --nocapture bench_speedrun_all_formats
+    #[tokio::test]
+    #[ignore = "benchmark — opt-in via --ignored"]
+    async fn bench_speedrun_all_formats() {
+        use std::time::Instant;
+
+        let pfx_path = fixture_pfx("rsa2048.pfx");
+        let credentials =
+            SigningCredentials::from_pfx(&pfx_path, "test").expect("load RSA-2048 fixture");
+
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let dir = tempdir.path();
+
+        let pe_in = dir.join("bench.exe");
+        std::fs::write(&pe_in, build_test_pe()).expect("write PE");
+        let cab_in = dir.join("bench.cab");
+        std::fs::write(&cab_in, build_interop_test_cab(64)).expect("write CAB");
+        let msi_in = dir.join("bench.msi");
+        std::fs::write(&msi_in, build_interop_test_msi()).expect("write MSI");
+        let ps1_in = dir.join("bench.ps1");
+        std::fs::write(&ps1_in, b"Write-Host 'pki-sign speedrun'\n").expect("write PS1");
+        let tar_in = dir.join("bench.tar.gz");
+        std::fs::write(&tar_in, vec![0xAAu8; 4096]).expect("write tarball");
+
+        let mut times_ms = Vec::<(&str, u128)>::new();
+
+        let pe_out = dir.join("bench-signed.exe");
+        let t = Instant::now();
+        sign_file(&pe_in, &pe_out, &credentials, None)
+            .await
+            .expect("sign PE");
+        times_ms.push(("PE", t.elapsed().as_millis()));
+
+        let cab_out = dir.join("bench-signed.cab");
+        let t = Instant::now();
+        sign_file(&cab_in, &cab_out, &credentials, None)
+            .await
+            .expect("sign CAB");
+        times_ms.push(("CAB", t.elapsed().as_millis()));
+
+        let msi_out = dir.join("bench-signed.msi");
+        let t = Instant::now();
+        sign_file(&msi_in, &msi_out, &credentials, None)
+            .await
+            .expect("sign MSI");
+        times_ms.push(("MSI", t.elapsed().as_millis()));
+
+        let ps1_out = dir.join("bench-signed.ps1");
+        let t = Instant::now();
+        sign_file(&ps1_in, &ps1_out, &credentials, None)
+            .await
+            .expect("sign PS1");
+        times_ms.push(("PS1", t.elapsed().as_millis()));
+
+        let t = Instant::now();
+        let det = sign_detached(&tar_in, &credentials, None)
+            .await
+            .expect("sign detached CMS");
+        times_ms.push(("CMS", t.elapsed().as_millis()));
+        std::fs::write(dir.join("bench.tar.gz.p7s"), &det.p7s_data).expect("write .p7s");
+
+        let total: u128 = times_ms.iter().map(|(_, ms)| ms).sum();
+        eprintln!("\nSPEEDRUN_BENCH pki-sign={}", env!("CARGO_PKG_VERSION"));
+        for (label, ms) in &times_ms {
+            eprintln!("  {:<4} {} ms", label, ms);
+        }
+        eprintln!("  TOTAL {} ms ({:.3} s)", total, total as f64 / 1000.0);
+
+        let verify = crate::verifier::verify_file(&pe_out).expect("verify PE");
+        assert!(verify.signature_valid, "PE self-verify failed");
+        eprintln!(
+            "\nVERIFY (PE)  digest={} signer={} valid={}",
+            verify.digest_algorithm, verify.signer_subject, verify.signature_valid
+        );
+    }
 }

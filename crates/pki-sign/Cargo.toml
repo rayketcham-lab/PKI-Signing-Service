@@ -98,7 +98,12 @@ csv = { workspace = true }
 http-body-util = "0.1"
 
 [features]
-default = []
+default = ["demo"]
+# Self-contained `pki-sign demo` subcommand. Embeds a throwaway RSA-2048
+# PFX (from tests/fixtures) so new users can watch pki-sign sign + verify
+# a Windows PE end-to-end in under a second without needing their own
+# cert. Default-on. Exclude for hardened builds with --no-default-features.
+demo = []
 # Experimental post-quantum signing (ML-DSA / SLH-DSA).
 #
 # Default-off because the ml-dsa 0.0.4 crate is pre-1.0 and carries open

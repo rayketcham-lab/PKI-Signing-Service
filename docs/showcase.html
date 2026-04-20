@@ -1,0 +1,407 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>pki-sign — Showcase Options Comparison</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Five ways to showcase pki-sign — side-by-side preview for choosing the right one.">
+  <style>
+    :root {
+      --bg: #0d1117;
+      --surface: #161b22;
+      --border: #30363d;
+      --text: #e6edf3;
+      --muted: #8b949e;
+      --accent: #58a6ff;
+      --ok: #3fb950;
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.55;
+    }
+    header {
+      padding: 48px 24px 24px;
+      border-bottom: 1px solid var(--border);
+      text-align: center;
+    }
+    header h1 { margin: 0 0 12px; font-size: 2rem; }
+    header p  { margin: 0; color: var(--muted); max-width: 700px; margin-inline: auto; }
+    nav {
+      position: sticky; top: 0; z-index: 10;
+      background: rgba(13, 17, 23, 0.92);
+      backdrop-filter: blur(10px);
+      padding: 12px 24px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      gap: 16px;
+      flex-wrap: wrap;
+      justify-content: center;
+    }
+    nav a {
+      color: var(--accent);
+      text-decoration: none;
+      font-size: 0.9rem;
+      padding: 4px 10px;
+      border-radius: 4px;
+      border: 1px solid transparent;
+    }
+    nav a:hover { border-color: var(--border); }
+    main { max-width: 1100px; margin: 0 auto; padding: 32px 24px; }
+    section {
+      margin-bottom: 64px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 32px;
+    }
+    section h2 {
+      margin: 0 0 8px;
+      font-size: 1.5rem;
+      display: flex;
+      align-items: baseline;
+      gap: 12px;
+    }
+    section h2 .num {
+      font-family: "SF Mono", Consolas, monospace;
+      color: var(--accent);
+      font-size: 1.1rem;
+      background: rgba(88, 166, 255, 0.1);
+      padding: 2px 10px;
+      border-radius: 4px;
+    }
+    section h2 .status {
+      margin-left: auto;
+      font-size: 0.75rem;
+      color: var(--muted);
+      font-weight: 400;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+    section h2 .status.live { color: var(--ok); }
+    .tldr {
+      color: var(--muted);
+      margin: 0 0 24px;
+      font-size: 0.95rem;
+    }
+    .preview {
+      margin: 24px 0;
+      padding: 20px;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      text-align: center;
+    }
+    .preview img {
+      max-width: 100%;
+      height: auto;
+      border-radius: 4px;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 12px;
+      margin: 16px 0;
+    }
+    .grid figure {
+      margin: 0;
+      padding: 8px;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+    }
+    .grid figcaption {
+      font-size: 0.8rem;
+      color: var(--muted);
+      text-align: center;
+      padding: 4px 0 0;
+    }
+    @media (min-width: 700px) {
+      .grid { grid-template-columns: repeat(3, 1fr); }
+    }
+    pre {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 16px 20px;
+      overflow-x: auto;
+      font-family: "SF Mono", Consolas, monospace;
+      font-size: 0.85rem;
+      line-height: 1.5;
+      color: var(--text);
+    }
+    code { font-family: "SF Mono", Consolas, monospace; font-size: 0.88em; }
+    ul { padding-left: 20px; }
+    li { margin: 6px 0; }
+    .pros-cons {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+      margin: 16px 0;
+    }
+    .pros, .cons {
+      padding: 16px;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+    }
+    .pros { background: rgba(63, 185, 80, 0.08); }
+    .cons { background: rgba(248, 81, 73, 0.08); }
+    .pros h4, .cons h4 { margin: 0 0 8px; font-size: 0.9rem; }
+    .pros h4 { color: var(--ok); }
+    .cons h4 { color: #f85149; }
+    .cast-links a {
+      display: inline-block;
+      margin: 4px 8px 4px 0;
+      padding: 6px 12px;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      color: var(--accent);
+      text-decoration: none;
+      font-family: "SF Mono", Consolas, monospace;
+      font-size: 0.85rem;
+    }
+    .cast-links a:hover { border-color: var(--accent); }
+    .decision {
+      margin-top: 48px;
+      padding: 32px;
+      background: linear-gradient(135deg, rgba(88, 166, 255, 0.08), rgba(63, 185, 80, 0.08));
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      text-align: center;
+    }
+    .decision h2 { margin-top: 0; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>pki-sign — Showcase Options</h1>
+    <p>Five ways to demo pki-sign. All five are built and comparable below. Pick the one (or mix) that best represents the tool — each section is self-contained.</p>
+  </header>
+
+  <nav>
+    <a href="#opt1">1 · Hero SVG</a>
+    <a href="#opt2">2 · Grid</a>
+    <a href="#opt3">3 · Live demos page</a>
+    <a href="#opt4">4 · asciinema.org</a>
+    <a href="#opt5">5 · pki-sign demo</a>
+    <a href="#decision">Compare</a>
+  </nav>
+
+  <main>
+
+    <!-- OPTION 1 -->
+    <section id="opt1">
+      <h2><span class="num">01</span> Hero SVG in README <span class="status live">currently live</span></h2>
+      <p class="tldr">One animated SVG at the top of the README. Auto-plays once on page load, holds the final frame.</p>
+
+      <div class="preview">
+        <img src="demos/speed-run.svg" alt="Hero SVG — speed-run cast rendered inline in README">
+      </div>
+
+      <div class="pros-cons">
+        <div class="pros">
+          <h4>Strengths</h4>
+          <ul>
+            <li>Zero extra infra — renders on github.com, crates.io, mirrors</li>
+            <li>56 KB asset, loads instantly</li>
+            <li>First-time visitor sees pki-sign in action without clicking</li>
+          </ul>
+        </div>
+        <div class="cons">
+          <h4>Tradeoffs</h4>
+          <ul>
+            <li>Tells only one story (batch signing)</li>
+            <li>Users who want API, PQC, audit, etc. must click through</li>
+          </ul>
+        </div>
+      </div>
+      <p><strong>Where it lives:</strong> <code>README.md</code> top, embeds <code>docs/demos/speed-run.svg</code>.</p>
+    </section>
+
+    <!-- OPTION 2 -->
+    <section id="opt2">
+      <h2><span class="num">02</span> Multi-demo grid <span class="status">preview only</span></h2>
+      <p class="tldr">Hero SVG + a 2×3 grid of smaller previews beneath it. Every use case visible on the README without clicking.</p>
+
+      <div class="preview">
+        <img src="demos/speed-run.svg" alt="Hero SVG" style="max-width: 600px;">
+        <div class="grid" style="max-width: 720px; margin-inline: auto;">
+          <figure><img src="showcase-thumbs/speed-run.svg" alt="speed-run"><figcaption>Speed Run · CLI batch</figcaption></figure>
+          <figure><img src="showcase-thumbs/the-api.svg" alt="the-api"><figcaption>REST API</figcaption></figure>
+          <figure><img src="showcase-thumbs/quantum-panic.svg" alt="quantum-panic"><figcaption>ML-DSA (PQ)</figcaption></figure>
+          <figure><img src="showcase-thumbs/the-auditor.svg" alt="the-auditor"><figcaption>Audit</figcaption></figure>
+          <figure><img src="showcase-thumbs/the-heist.svg" alt="the-heist"><figcaption>Tamper detection</figcaption></figure>
+          <figure><img src="showcase-thumbs/the-intern.svg" alt="the-intern"><figcaption>First day</figcaption></figure>
+        </div>
+      </div>
+
+      <div class="pros-cons">
+        <div class="pros">
+          <h4>Strengths</h4>
+          <ul>
+            <li>Every story told on one page</li>
+            <li>Looks like a product page, not a tool README</li>
+            <li>Each thumbnail is a static frame (~3–5 KB) — cheap</li>
+          </ul>
+        </div>
+        <div class="cons">
+          <h4>Tradeoffs</h4>
+          <ul>
+            <li>Dominates the page — pushes install instructions down</li>
+            <li>Maintenance: rerender all 6 when copy changes</li>
+            <li>Reads as marketing vs. technical</li>
+          </ul>
+        </div>
+      </div>
+      <p><strong>If selected:</strong> append the grid markdown to <code>README.md</code> after the hero block. Thumbnails in <code>docs/showcase-thumbs/</code> already rendered.</p>
+    </section>
+
+    <!-- OPTION 3 -->
+    <section id="opt3">
+      <h2><span class="num">03</span> Dedicated demos page <span class="status live">currently live</span></h2>
+      <p class="tldr">Standalone <code>demo.html</code> with the full asciinema-player JS — scrubbable, pausable, with copy-text.</p>
+
+      <div class="preview" style="padding: 0;">
+        <iframe src="demo.html" width="100%" height="600" style="border: 1px solid var(--border); border-radius: 8px; background: var(--bg);"></iframe>
+      </div>
+
+      <div class="pros-cons">
+        <div class="pros">
+          <h4>Strengths</h4>
+          <ul>
+            <li>Real scrubbable player — pause, rewind, copy selected text</li>
+            <li>All 6 casts with explanatory captions and CTAs</li>
+            <li>Separation of concerns: README stays technical, demo page stays narrative</li>
+          </ul>
+        </div>
+        <div class="cons">
+          <h4>Tradeoffs</h4>
+          <ul>
+            <li>Requires a click from README → might not convert</li>
+            <li>Two surfaces to maintain</li>
+          </ul>
+        </div>
+      </div>
+      <p><strong>Where it lives:</strong> <a href="demo.html">docs/demo.html</a> — served by GitHub Pages.</p>
+    </section>
+
+    <!-- OPTION 4 -->
+    <section id="opt4">
+      <h2><span class="num">04</span> asciinema.org hosted <span class="status">uploaded (anon, 7-day TTL)</span></h2>
+      <p class="tldr">Upload casts to asciinema.org. README embeds their SVG badges; clicking opens the full scrubbable player on their site.</p>
+
+      <div class="preview">
+        <p style="color: var(--muted); margin: 0 0 16px;">All 6 casts uploaded anonymously (expire in 7 days unless the CLI is authenticated to an account):</p>
+        <div class="cast-links">
+          <a href="https://asciinema.org/a/9ODj4KkzMVjLXMvM" target="_blank">speed-run</a>
+          <a href="https://asciinema.org/a/d5ynr3mIztwc4I4C" target="_blank">quantum-panic</a>
+          <a href="https://asciinema.org/a/0dy4Kku3EglCNziR" target="_blank">the-heist</a>
+          <a href="https://asciinema.org/a/3xG521TxamkRK1Dw" target="_blank">the-auditor</a>
+          <a href="https://asciinema.org/a/KFnk2kgoiljOExHm" target="_blank">the-api</a>
+          <a href="https://asciinema.org/a/JWZts6BO6HtuuxLM" target="_blank">the-intern</a>
+        </div>
+        <p style="color: var(--muted); margin: 20px 0 0; font-size: 0.85rem;">README embed would look like:</p>
+        <pre>[![asciicast](https://asciinema.org/a/9ODj4KkzMVjLXMvM.svg)](https://asciinema.org/a/9ODj4KkzMVjLXMvM)</pre>
+      </div>
+
+      <div class="pros-cons">
+        <div class="pros">
+          <h4>Strengths</h4>
+          <ul>
+            <li>Asciinema's CDN serves SVG badges fast, globally</li>
+            <li>Click-through → real scrubbable player hosted by them</li>
+            <li>No asset bloat in the repo</li>
+          </ul>
+        </div>
+        <div class="cons">
+          <h4>Tradeoffs</h4>
+          <ul>
+            <li><strong>External dependency.</strong> Asciinema.org outage = dead demos</li>
+            <li>Anonymous uploads expire in 7 days — need authenticated account for permanence</li>
+            <li>Less control over badge styling</li>
+          </ul>
+        </div>
+      </div>
+      <p><strong>If selected:</strong> you auth the asciinema CLI on this box (<code>asciinema auth</code>), re-upload the casts to your account, swap README embeds to the permanent URLs.</p>
+    </section>
+
+    <!-- OPTION 5 -->
+    <section id="opt5">
+      <h2><span class="num">05</span> <code>pki-sign demo</code> subcommand <span class="status live">built &amp; shipping</span></h2>
+      <p class="tldr">Real subcommand in the binary. Runs a full sign + verify round-trip against a bundled throwaway cert in &lt;20 ms. Prospective adopters can flex the tool on their own machine seconds after install.</p>
+
+      <div class="preview" style="text-align: left;">
+        <p style="color: var(--muted); margin: 0 0 8px;"><code>$ pki-sign demo</code></p>
+<pre style="text-align: left;">
+  <strong style="color: #58a6ff;">pki-sign demo — end-to-end sign + verify in-process</strong>
+  <span style="color: var(--muted);">(bundled throwaway RSA-2048 cert — not a real signing key)</span>
+
+  <span style="color: var(--ok);">✔</span> credentials loaded <span style="color: var(--muted);">(10ms)</span>
+  <span style="color: var(--ok);">✔</span> generated minimal PE32 (512 bytes) <span style="color: var(--muted);">(40µs)</span>
+  <span style="color: var(--ok);">✔</span> signed — original SHA-256 06bb17dc2839…, signed SHA-256 05ba20ecbd7a… <span style="color: var(--muted);">(3ms)</span>
+  <span style="color: var(--ok);">✔</span> verified — digest SHA-256 <span style="color: var(--muted);">(67µs)</span>
+      <span style="color: var(--muted);">signer:</span> Test RSA-2048
+
+  <strong>Total round-trip:</strong> <strong style="color: var(--ok);">13ms</strong>
+
+  <strong>Next steps:</strong>
+    1. Use your own code-signing PFX:
+       <span style="color: var(--muted);">export PKI_SIGN_PFX_PASSWORD='your-password'</span>
+       <span style="color: var(--muted);">pki-sign sign --pfx your-cert.pfx your-app.exe</span>
+    2. Verify: <span style="color: var(--muted);">pki-sign verify your-app-signed.exe</span>
+</pre>
+      </div>
+
+      <div class="pros-cons">
+        <div class="pros">
+          <h4>Strengths</h4>
+          <ul>
+            <li>Hands-on — users execute pki-sign themselves, no setup</li>
+            <li>13 ms round-trip is a real data-point the tool backs up with numbers</li>
+            <li>Doubles as an integration smoke-test — if <code>demo</code> fails in CI, something fundamental is broken</li>
+            <li>Gated behind <code>demo</code> feature (default-on); hardened builds can exclude it via <code>--no-default-features</code></li>
+          </ul>
+        </div>
+        <div class="cons">
+          <h4>Tradeoffs</h4>
+          <ul>
+            <li>+2.4 KB in the binary (embedded test PFX)</li>
+            <li>A <code>demo</code> subcommand in a security tool can read as unserious — mitigated by the "not a real signing key" disclaimer</li>
+            <li>~110 LOC of code + one feature flag to maintain</li>
+          </ul>
+        </div>
+      </div>
+      <p><strong>Where it lives:</strong> <code>crates/pki-sign/src/demo.rs</code> (feature-gated), wired through <code>Commands::Demo</code> in <code>main.rs</code>.</p>
+    </section>
+
+    <!-- DECISION HELP -->
+    <div class="decision" id="decision">
+      <h2>Compare at a glance</h2>
+      <table style="margin: 24px auto; border-collapse: collapse; text-align: left;">
+        <thead>
+          <tr style="border-bottom: 1px solid var(--border);">
+            <th style="padding: 10px 16px;"></th>
+            <th style="padding: 10px 16px;">Effort</th>
+            <th style="padding: 10px 16px;">Hosting risk</th>
+            <th style="padding: 10px 16px;">Proof strength</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr style="border-bottom: 1px solid var(--border);"><td style="padding: 10px 16px;">01 · Hero SVG</td><td style="padding: 10px 16px;">Low</td><td style="padding: 10px 16px;">None</td><td style="padding: 10px 16px;">Medium</td></tr>
+          <tr style="border-bottom: 1px solid var(--border);"><td style="padding: 10px 16px;">02 · Grid</td><td style="padding: 10px 16px;">Low</td><td style="padding: 10px 16px;">None</td><td style="padding: 10px 16px;">Medium</td></tr>
+          <tr style="border-bottom: 1px solid var(--border);"><td style="padding: 10px 16px;">03 · Demo page</td><td style="padding: 10px 16px;">Done</td><td style="padding: 10px 16px;">None (self-hosted)</td><td style="padding: 10px 16px;">Medium-High</td></tr>
+          <tr style="border-bottom: 1px solid var(--border);"><td style="padding: 10px 16px;">04 · asciinema.org</td><td style="padding: 10px 16px;">Low (auth needed)</td><td style="padding: 10px 16px;"><strong>External</strong></td><td style="padding: 10px 16px;">Medium</td></tr>
+          <tr><td style="padding: 10px 16px;">05 · <code>pki-sign demo</code></td><td style="padding: 10px 16px;">Medium (done)</td><td style="padding: 10px 16px;">None</td><td style="padding: 10px 16px;"><strong>High</strong> (executable proof)</td></tr>
+        </tbody>
+      </table>
+      <p style="max-width: 600px; margin-inline: auto;">Options are not mutually exclusive — a strong combo is <strong>01 + 03 + 05</strong>: hero SVG on README, full demo page for browsers, <code>pki-sign demo</code> for the CLI.</p>
+    </div>
+
+  </main>
+</body>
+</html>

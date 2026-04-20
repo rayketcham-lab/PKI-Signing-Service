@@ -38,6 +38,8 @@
 
 pub mod cab;
 pub mod config;
+#[cfg(feature = "demo")]
+pub mod demo;
 pub mod error;
 pub mod msi;
 pub mod pe;
