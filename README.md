@@ -8,7 +8,7 @@ No OpenSSL. No `signtool.exe`. No external dependencies. One binary.
 
 <p align="center">
   <a href="https://rayketcham-lab.github.io/PKI-Signing-Service/demo.html">
-    <img src="docs/demos/the-intern.svg" alt="pki-sign demo — sign, verify, deploy a Windows PE in under 30s" width="800">
+    <img src="docs/demos/speed-run.svg" alt="pki-sign demo — sign and verify a batch of Windows binaries in under 10s" width="800">
   </a>
   <br>
   <em>▶ <a href="https://rayketcham-lab.github.io/PKI-Signing-Service/demo.html">Watch the full demo suite (6 scripted casts)</a></em>
@@ -87,7 +87,7 @@ No OpenSSL. No `signtool.exe`. No external dependencies. One binary.
 - **Static binary** --- `x86_64-unknown-linux-musl` target, zero runtime dependencies
 
 > [!TIP]
-> One binary handles CLI signing, a REST API server, and a standalone TSA server. Deploy however you need it.
+> One binary handles CLI signing, a REST API server, and a standalone TSA server. Run it however you need it.
 
 See the [interactive demos](https://rayketcham-lab.github.io/PKI-Signing-Service/demo.html) for six asciinema walkthroughs covering the CLI, API, auditor, and more.
 
