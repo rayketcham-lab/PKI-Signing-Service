@@ -844,6 +844,7 @@
       <ul class="nav-links">
         <li><a href="#features">Features</a></li>
         <li><a href="#demo">Demo</a></li>
+        <li><a href="demo.html">Live Casts</a></li>
         <li><a href="#architecture">Architecture</a></li>
         <li><a href="#api">API</a></li>
         <li><a href="https://github.com/rayketcham-lab/PKI-Signing-Service" class="nav-cta">GitHub</a></li>
@@ -926,7 +927,7 @@
             <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
           </div>
           <h3>PKCS#7 / CMS</h3>
-          <p>Detached and embedded PKCS#7 signatures with full ASN.1 builder. S/MIME, signed data, enveloped data, and ESS support.</p>
+          <p>Detached and embedded PKCS#7 signatures with full ASN.1 builder. SignedData, DigestedData, and ESS signed-attribute support.</p>
         </div>
 
         <div class="feature-card fade-up">
@@ -1006,6 +1007,12 @@
   <span class="info">&#9656; Audit log: /var/log/pki-sign/audit.json</span>
         </div>
       </div>
+      <div style="text-align:center;margin-top:32px">
+        <a href="demo.html" class="btn btn-secondary" style="display:inline-flex;align-items:center;gap:10px">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+          Watch the live demos
+        </a>
+      </div>
     </div>
   </section>
 
@@ -1016,7 +1023,7 @@
     <div class="container">
       <span class="section-label fade-up">Under the Hood</span>
       <h2 class="section-title fade-up">Clean architecture</h2>
-      <p class="section-desc fade-up">34 source files, modular design. Every component is isolated, testable, and auditable.</p>
+      <p class="section-desc fade-up">28 source files, modular design. Every component is isolated, testable, and auditable.</p>
 
       <div class="arch-block fade-up">
         <div class="arch-header">crates/pki-sign/src/</div>
@@ -1063,34 +1070,65 @@
         <div class="api-card fade-up">
           <span class="api-method api-method-post">POST</span>
           <div class="api-route">/api/v1/sign</div>
-          <div class="api-desc">Sign a binary. Accepts PE, CAB, MSI, or raw payload. Returns signed artifact or detached signature.</div>
+          <div class="api-desc">Embedded Authenticode sign. Accepts PE/CAB/MSI/PowerShell upload, returns the signed artifact.</div>
+        </div>
+        <div class="api-card fade-up">
+          <span class="api-method api-method-post">POST</span>
+          <div class="api-route">/api/v1/sign-detached</div>
+          <div class="api-desc">Arbitrary-file detached CMS SignedData. Wrap any payload for transport + later verification.</div>
+        </div>
+        <div class="api-card fade-up">
+          <span class="api-method api-method-post">POST</span>
+          <div class="api-route">/api/v1/sign-batch</div>
+          <div class="api-desc">Batch sign multiple files in one ZIP upload. Returns a ZIP of signed artifacts + a CSV summary.</div>
         </div>
         <div class="api-card fade-up">
           <span class="api-method api-method-post">POST</span>
           <div class="api-route">/api/v1/verify</div>
-          <div class="api-desc">Verify a signed binary. Returns signature details, certificate chain, and timestamp status.</div>
+          <div class="api-desc">Verify an embedded-signed binary. Returns signature details, certificate chain, and timestamp status.</div>
         </div>
         <div class="api-card fade-up">
           <span class="api-method api-method-post">POST</span>
-          <div class="api-route">/api/v1/timestamp</div>
-          <div class="api-desc">RFC 3161 timestamp endpoint. Submit a timestamp request, receive a signed timestamp token.</div>
+          <div class="api-route">/api/v1/verify-detached</div>
+          <div class="api-desc">Verify a detached CMS SignedData envelope against an original payload.</div>
         </div>
         <div class="api-card fade-up">
           <span class="api-method api-method-get">GET</span>
           <div class="api-route">/api/v1/health</div>
-          <div class="api-desc">Health check and service status. Returns uptime, loaded certificates, and signing statistics.</div>
+          <div class="api-desc">Liveness check. Returns <code>200 OK</code> when the service is up.</div>
         </div>
         <div class="api-card fade-up">
           <span class="api-method api-method-get">GET</span>
-          <div class="api-route">/api/v1/certs</div>
-          <div class="api-desc">List available signing certificates. Shows subject, issuer, algorithm, and expiration.</div>
+          <div class="api-route">/api/v1/status</div>
+          <div class="api-desc">Service status. Uptime, loaded certificates, signing statistics.</div>
         </div>
         <div class="api-card fade-up">
           <span class="api-method api-method-get">GET</span>
-          <div class="api-route">/api/v1/audit</div>
-          <div class="api-desc">Query audit log. Filter by user, action, time range. Returns structured JSON events.</div>
+          <div class="api-route">/api/v1/certificate</div>
+          <div class="api-desc">Public certificate info for the active signer (subject, issuer, SKI, expiry).</div>
+        </div>
+        <div class="api-card fade-up">
+          <span class="api-method api-method-post">POST</span>
+          <div class="api-route">/api/v1/report-issue</div>
+          <div class="api-desc">Open a GitHub issue from the web UI (admin-authenticated, via configured GH token).</div>
+        </div>
+        <div class="api-card fade-up">
+          <span class="api-method api-method-get">GET</span>
+          <div class="api-route">/admin/certs</div>
+          <div class="api-desc">Admin: list available signing certificates. Shows subject, issuer, algorithm, expiration.</div>
+        </div>
+        <div class="api-card fade-up">
+          <span class="api-method api-method-get">GET</span>
+          <div class="api-route">/admin/audit</div>
+          <div class="api-desc">Admin: query audit log. Filter by user, action, time range. Returns structured JSON events.</div>
+        </div>
+        <div class="api-card fade-up">
+          <span class="api-method api-method-post">POST</span>
+          <div class="api-route">/admin/reload</div>
+          <div class="api-desc">Admin: hot-reload config + trust store without a restart.</div>
         </div>
       </div>
+      <p class="section-desc fade-up" style="margin-top:24px;font-size:13px;opacity:0.7">RFC 3161 timestamping is exposed as a separate binding via <code style="color:var(--accent-cyan);font-family:var(--font-mono)">pki-sign tsa serve</code> (DER over HTTP). See the TSA section for details.</p>
     </div>
   </section>
 

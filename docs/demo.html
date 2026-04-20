@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>PKI Signing Service — Live Demos</title>
-  <meta name="description" content="Interactive demos: Authenticode signing, tamper detection, post-quantum ML-DSA, and more. Watch code signing in action.">
+  <meta name="description" content="Interactive demos: Authenticode signing, tamper detection, experimental post-quantum ML-DSA, and more. Watch code signing in action.">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -1145,7 +1145,7 @@
             <span class="suite-card-badge suite-card-badge-here">You Are Here</span>
           </div>
           <div class="suite-card-name">PKI Signing Service</div>
-          <p class="suite-card-desc">Authenticode, PKCS#7, RFC 3161 timestamping, post-quantum ML-DSA. Code signing made fast, correct, and &#8212; against all odds &#8212; fun.</p>
+          <p class="suite-card-desc">Authenticode, PKCS#7, RFC 3161 timestamping, and experimental post-quantum ML-DSA behind the <code>pq-experimental</code> feature flag. Code signing made fast, correct, and &#8212; against all odds &#8212; fun.</p>
           <div class="suite-card-arrow" aria-hidden="true">
             View docs <span>&#8594;</span>
           </div>
@@ -1192,15 +1192,15 @@
           <div class="install-step">
             <div class="install-step-num" aria-hidden="true">2</div>
             <div class="install-step-content">
-              <div class="install-step-label">Import your PFX certificate</div>
-              <div class="code-block">pki-sign import --pfx my-cert.pfx --label my-cert<button class="copy-btn" aria-label="Copy import command" data-copy="pki-sign import --pfx my-cert.pfx --label my-cert">Copy</button></div>
+              <div class="install-step-label">Point the PFX password at an env var</div>
+              <div class="code-block">export PKI_SIGN_PFX_PASSWORD=&#x27;your-pfx-password&#x27;<button class="copy-btn" aria-label="Copy env command" data-copy="export PKI_SIGN_PFX_PASSWORD='your-pfx-password'">Copy</button></div>
             </div>
           </div>
           <div class="install-step">
             <div class="install-step-num" aria-hidden="true">3</div>
             <div class="install-step-content">
               <div class="install-step-label">Sign your first binary</div>
-              <div class="code-block">pki-sign pe --cert my-cert --timestamp --file my-app.exe<button class="copy-btn" aria-label="Copy sign command" data-copy="pki-sign pe --cert my-cert --timestamp --file my-app.exe">Copy</button></div>
+              <div class="code-block">pki-sign sign --pfx my-cert.pfx my-app.exe -o my-app-signed.exe<button class="copy-btn" aria-label="Copy sign command" data-copy="pki-sign sign --pfx my-cert.pfx my-app.exe -o my-app-signed.exe">Copy</button></div>
             </div>
           </div>
         </div>
@@ -1236,7 +1236,7 @@
         { id: 'intern',    cast: 'demos/the-intern.cast',     title: "The Intern",    desc: "Kevin's first day. What could go wrong?" },
         { id: 'heist',     cast: 'demos/the-heist.cast',      title: "The Heist",     desc: "Somebody tampered with the binary. Big mistake." },
         { id: 'speed-run', cast: 'demos/speed-run.cast',      title: "Speed Run",     desc: "5 file types. 5 seconds. World record attempt." },
-        { id: 'quantum',   cast: 'demos/quantum-panic.cast',  title: "Quantum Panic", desc: "RSA is dead. Long live ML-DSA." },
+        { id: 'quantum',   cast: 'demos/quantum-panic.cast',  title: "Quantum Panic", desc: "RSA is dead. Long live ML-DSA (experimental: pq-experimental feature flag)." },
         { id: 'auditor',   cast: 'demos/the-auditor.cast',    title: "The Auditor",   desc: "Karen from Compliance has entered the chat." },
         { id: 'api',       cast: 'demos/the-api.cast',        title: "REST in Peace", desc: "Where unsigned code goes to die." }
       ];
