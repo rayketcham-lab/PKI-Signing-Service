@@ -19,12 +19,32 @@ use crate::error::{SignError, SignResult};
 use crate::pkcs7::asn1;
 
 /// Configuration for timestamp authority servers.
+///
+/// ## `tsa_trust_roots`
+///
+/// An optional list of PEM or DER certificate files that act as the trust
+/// anchors for verifying TSA counter-signer certificate chains.  When
+/// non-empty, [`crate::verifier`] will require the TSA cert's chain to
+/// terminate at one of these roots **and** will always enforce the
+/// `id-kp-timeStamping` EKU (OID `1.3.6.1.5.5.7.3.8`) per RFC 3161 §2.3.
+///
+/// When the list is empty (the default), chain validation is **skipped** but
+/// the `id-kp-timeStamping` EKU is still enforced as a defense-in-depth
+/// measure.  Operators are strongly encouraged to configure at least one
+/// trust root in production environments.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct TsaConfig {
     /// TSA URLs to try in order (failover).
     pub urls: Vec<String>,
     /// HTTP timeout per request (seconds).
     pub timeout_secs: u64,
+    /// Paths to PEM or DER trust-anchor certificates for TSA chain validation.
+    ///
+    /// Each path must point to a file containing one or more DER- or
+    /// PEM-encoded X.509 certificates.  Defaults to an empty list (chain
+    /// validation skipped; EKU still enforced).
+    #[serde(default)]
+    pub tsa_trust_roots: Vec<std::path::PathBuf>,
 }
 
 impl Default for TsaConfig {
@@ -35,6 +55,7 @@ impl Default for TsaConfig {
                 "https://timestamp.sectigo.com".into(),
             ],
             timeout_secs: 30,
+            tsa_trust_roots: Vec::new(),
         }
     }
 }

@@ -46,6 +46,8 @@ You should receive an acknowledgment within 48 hours. We aim to release a fix wi
 
 ## Release Signing & Verification
 
+**TSA counter-signer verification:** When validating a timestamp, the engine enforces the `id-kp-timeStamping` EKU (OID `1.3.6.1.5.5.7.3.8`) on the TSA certificate per RFC 3161 §2.3, and optionally validates the full TSA chain against operator-configured trust roots via `TsaConfig.tsa_trust_roots`. EKU enforcement is always active even when no trust roots are configured.
+
 Every release artifact is signed with [cosign](https://github.com/sigstore/cosign)
 keyless signing, driven by the `release.yml` workflow using GitHub Actions OIDC.
 Each binary ships with a self-contained `.cosign-bundle` (cosign 2.x

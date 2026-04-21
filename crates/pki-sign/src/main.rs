@@ -284,6 +284,7 @@ fn main() {
                     pki_sign::timestamp::TsaConfig {
                         urls: vec![url],
                         timeout_secs: 30,
+                        tsa_trust_roots: Vec::new(),
                     }
                 } else {
                     pki_sign::timestamp::TsaConfig::default()
@@ -356,6 +357,7 @@ fn main() {
                     pki_sign::timestamp::TsaConfig {
                         urls: vec![url],
                         timeout_secs: 30,
+                        tsa_trust_roots: Vec::new(),
                     }
                 } else {
                     pki_sign::timestamp::TsaConfig::default()

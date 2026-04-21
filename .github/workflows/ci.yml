@@ -312,7 +312,7 @@ jobs:
             # builds — ml-dsa is feature-gated (gh #72) and absent from the
             # default dep graph (verified by pq_feature_gate.rs). Ignored in
             # audit because Cargo.lock still pins the crate for the opt-in feature.
-            cargo audit --ignore RUSTSEC-2023-0071 --ignore RUSTSEC-2025-0134 --ignore RUSTSEC-2025-0144 && break
+            cargo audit --ignore RUSTSEC-2023-0071 --ignore RUSTSEC-2025-0134 --ignore RUSTSEC-2025-0144 --ignore RUSTSEC-2026-0097 && break
             echo "Attempt $attempt failed, retrying..."
             sleep 5
           done

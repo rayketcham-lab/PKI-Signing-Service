@@ -74,4 +74,11 @@ pub enum SignError {
     /// Internal error.
     #[error("Internal error: {0}")]
     Internal(String),
+
+    /// The TSA counter-signer certificate chain or EKU is invalid (RFC 3161 §2.3).
+    ///
+    /// This variant is distinct from [`SignError::Certificate`] so callers can
+    /// distinguish a TSA-chain failure from a file-signer-chain failure.
+    #[error("TSA certificate invalid: {0}")]
+    TsaCertInvalid(String),
 }
