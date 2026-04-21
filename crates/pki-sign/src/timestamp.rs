@@ -33,6 +33,7 @@ use crate::pkcs7::asn1;
 /// measure.  Operators are strongly encouraged to configure at least one
 /// trust root in production environments.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[non_exhaustive]
 pub struct TsaConfig {
     /// TSA URLs to try in order (failover).
     pub urls: Vec<String>,
@@ -54,6 +55,21 @@ impl Default for TsaConfig {
                 "https://timestamp.digicert.com".into(),
                 "https://timestamp.sectigo.com".into(),
             ],
+            timeout_secs: 30,
+            tsa_trust_roots: Vec::new(),
+        }
+    }
+}
+
+impl TsaConfig {
+    /// Construct a TSA config with the given URL(s) and a 30-second timeout.
+    ///
+    /// Chain validation is disabled by default (no trust roots); EKU is still enforced.
+    /// Use the `tsa_trust_roots` field to enable chain validation.
+    #[must_use]
+    pub fn new(urls: Vec<String>) -> Self {
+        Self {
+            urls,
             timeout_secs: 30,
             tsa_trust_roots: Vec::new(),
         }

@@ -182,6 +182,65 @@ fn rsa_no_oaep_decrypt_reachable_from_web() {
     );
 }
 
+/// `rustls-webpki` is a *transitive* dependency — it comes in via `rustls` for
+/// HTTPS to TSA / OCSP / LDAP endpoints, not via any direct API call in this
+/// crate. That means the `rustls_webpki_has_cve_patch` version-floor test is
+/// the correct shape for the CVE regression: we don't exercise webpki code
+/// paths directly, so a behavioral test would be testing upstream, not us.
+///
+/// This test guards the "transitive-only" invariant: if a future change
+/// introduces a direct `webpki::` / `rustls_webpki::` import into the pki-sign
+/// source tree, the advisory posture changes (direct callsites might exercise
+/// CVE paths), and this test will fail so the change can be reviewed and the
+/// regression story updated.
+#[test]
+fn rustls_webpki_stays_transitive_only() {
+    let mut src_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    src_root.push("src");
+    assert!(
+        src_root.is_dir(),
+        "expected {} to be a directory",
+        src_root.display()
+    );
+
+    let forbidden: &[&str] = &[
+        "use webpki",
+        "use rustls_webpki",
+        "rustls_webpki::",
+        " webpki::", // leading space avoids matching "rustls-webpki" in comments / strings
+    ];
+
+    let mut offenders: Vec<(PathBuf, String, String)> = Vec::new();
+    walk_rs_files(&src_root, &mut |path| {
+        let content = match std::fs::read_to_string(path) {
+            Ok(c) => c,
+            Err(_) => return,
+        };
+        for (lineno, line) in content.lines().enumerate() {
+            let trimmed = line.trim_start();
+            if trimmed.starts_with("//") || trimmed.starts_with("//!") {
+                continue;
+            }
+            for needle in forbidden {
+                if line.contains(needle) {
+                    offenders.push((
+                        path.to_path_buf(),
+                        (*needle).to_string(),
+                        format!("line {}: {}", lineno + 1, line.trim()),
+                    ));
+                }
+            }
+        }
+    });
+
+    assert!(
+        offenders.is_empty(),
+        "webpki transitive-only invariant broken: a direct webpki API call appeared. \
+         A behavioral CVE regression test is now required to accompany any direct \
+         callsite. Offenders: {offenders:#?}"
+    );
+}
+
 fn walk_rs_files(dir: &std::path::Path, visit: &mut dyn FnMut(&std::path::Path)) {
     let entries = match std::fs::read_dir(dir) {
         Ok(e) => e,

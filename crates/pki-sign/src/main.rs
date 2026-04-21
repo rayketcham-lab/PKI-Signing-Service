@@ -281,11 +281,7 @@ fn main() {
                 None
             } else {
                 let config = if let Some(url) = tsa {
-                    pki_sign::timestamp::TsaConfig {
-                        urls: vec![url],
-                        timeout_secs: 30,
-                        tsa_trust_roots: Vec::new(),
-                    }
+                    pki_sign::timestamp::TsaConfig::new(vec![url])
                 } else {
                     pki_sign::timestamp::TsaConfig::default()
                 };
@@ -354,11 +350,7 @@ fn main() {
                 None
             } else {
                 let config = if let Some(url) = tsa {
-                    pki_sign::timestamp::TsaConfig {
-                        urls: vec![url],
-                        timeout_secs: 30,
-                        tsa_trust_roots: Vec::new(),
-                    }
+                    pki_sign::timestamp::TsaConfig::new(vec![url])
                 } else {
                     pki_sign::timestamp::TsaConfig::default()
                 };
