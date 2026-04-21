@@ -13,6 +13,10 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
+  # Opt into Node.js 24 runtime for JS actions ahead of the June 2026 forced cutover
+  # (actions/checkout@v4 + actions/cache@v4 still ship on Node 20). Suppresses the
+  # deprecation annotation and validates the transition under real CI load.
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
 
 concurrency:
   group: ci-${{ github.ref }}
