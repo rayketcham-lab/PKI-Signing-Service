@@ -37,6 +37,7 @@
 //! ```
 
 pub mod cab;
+pub mod cert;
 pub mod config;
 #[cfg(feature = "demo")]
 pub mod demo;
