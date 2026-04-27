@@ -35,7 +35,7 @@ hex = { workspace = true }
 base64 = { workspace = true }
 uuid = { version = "1.0", features = ["v4", "serde"] }
 rand = { workspace = true }
-colored = "2"
+colored = "3"
 
 # PE/COFF parsing
 goblin = { version = "0.9", default-features = false, features = ["pe32", "pe64", "std"] }
