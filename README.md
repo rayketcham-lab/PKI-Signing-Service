@@ -40,7 +40,7 @@ No OpenSSL. No `signtool.exe`. No external dependencies. One binary.
 <!-- Build & Quality -->
 [![Clippy](https://img.shields.io/badge/clippy--D%20warnings-passing-brightgreen?logo=rust&logoColor=white)](https://github.com/rayketcham-lab/PKI-Signing-Service/actions/workflows/ci.yml)
 [![Formatting](https://img.shields.io/badge/rustfmt-checked-brightgreen?logo=rust&logoColor=white)](https://github.com/rayketcham-lab/PKI-Signing-Service/actions/workflows/ci.yml)
-[![PQC](https://img.shields.io/badge/post--quantum-ML--DSA-blueviolet?logo=quantcast&logoColor=white)](https://github.com/rayketcham-lab/PKI-Signing-Service)
+[![PQC](https://img.shields.io/badge/post--quantum-ML--DSA_experimental-orange?logo=quantcast&logoColor=white)](https://github.com/rayketcham-lab/PKI-Signing-Service)
 [![Static Binary](https://img.shields.io/badge/static%20binary-musl-blue?logo=linux&logoColor=white)](https://github.com/rayketcham-lab/PKI-Signing-Service/releases)
 [![Windows](https://img.shields.io/badge/Windows-supported-blue?logo=windows&logoColor=white)](https://github.com/rayketcham-lab/PKI-Signing-Service/releases)
 
