@@ -31,7 +31,7 @@ clap = { version = "4", features = ["derive", "env"] }
 tokio = { version = "1.44", features = ["full"] }
 
 # HTTP server / client
-axum = "0.7"
+axum = "0.8"
 tower-http = { version = "0.5", features = ["trace", "cors", "fs", "limit"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
