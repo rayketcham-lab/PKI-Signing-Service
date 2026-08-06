@@ -45,7 +45,7 @@ cfb = "0.9"
 
 # Crypto - signing
 sha1 = "0.10"
-sha2 = { version = "0.10", features = ["oid"] }
+sha2 = { version = "0.11", features = ["oid"] }
 sha3 = "0.10"
 rsa = "0.9"
 p256 = { version = "0.13", features = ["ecdsa", "pem"] }
